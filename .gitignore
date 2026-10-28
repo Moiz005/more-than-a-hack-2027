@@ -32,6 +32,27 @@ evaluation/scoreboard.csv
 data/*
 !data/README.md
 
+# -- generated or reconstructive local artifacts ----------------------------------------------
+starter_v2/outputs/
+**/predictions/
+**/predictions*.csv
+**/*_prediction.csv
+**/*_predictions.csv
+**/submissions/
+**/*_submission.csv
+**/clips/
+**/clip_exports/
+**/restricted_diagnostics/
+**/*_restricted_diagnostics.*
+
+# -- credentials and local environment ---------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.local-checkpoints/
+
 *.mp4
 *.gzip
 *.pl3container

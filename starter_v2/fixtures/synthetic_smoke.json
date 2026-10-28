@@ -1,0 +1,6 @@
+{
+  "kind": "synthetic_only",
+  "seed": 1729,
+  "frame_count": 6,
+  "labels": ["H", "H", "D", "A", "A", "X"]
+}
