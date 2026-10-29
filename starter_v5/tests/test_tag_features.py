@@ -2,7 +2,7 @@ import unittest
 
 from starter_v5.ingestion import SmartTagEvent
 from starter_v5.features import E02Config, iter_frame_features
-from starter_v5.inference import _team_evidence
+from starter_v5.inference import _team_evidence, iter_infer_e02
 from starter_v5.possession import FrameEvidence, PlayerEvidence, PossessionConfig
 from starter_v5.tag_features import TagEvidence, iter_tag_evidence
 
@@ -87,6 +87,15 @@ class TagFeatureTests(unittest.TestCase):
             TagEvidence(active=True, team_conflict=True, home_prior=0.0, away_prior=0.0),
         )
         self.assertIsNone(result.team)
+
+    def test_restart_and_goal_context_alone_do_not_force_dead_ball(self):
+        frame = FrameEvidence(0, 1, None, (), restart_context=True)
+        result = next(iter_infer_e02(
+            [frame], PossessionConfig(), E02Config(),
+            tag_evidence=[TagEvidence(active=True, restart_context=True, goal_context=True)],
+        ))
+        self.assertNotEqual(result.inference.label, "D")
+        self.assertFalse(result.inference.dead_ball_evidence.confirmed)
 
 
 if __name__ == "__main__":
