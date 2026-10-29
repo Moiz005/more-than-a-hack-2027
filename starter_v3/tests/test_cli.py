@@ -1,0 +1,62 @@
+"""CLI configuration and no-data smoke tests."""
+
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+from starter_v3.run_e01 import load_config
+
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class CliTests(unittest.TestCase):
+    def test_config_rejects_unknown_and_broadcast_source(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "config.json"
+            for payload, expected in (
+                ({"mystery": 1}, "unknown config keys"),
+                ({"source": "broadcast"}, "tactical"),
+                ({"possession": {"mystery": 1}}, "unknown possession config keys"),
+            ):
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                with self.subTest(payload=payload), self.assertRaisesRegex(ValueError, expected):
+                    load_config(path)
+
+    def test_config_loads_documented_thresholds(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "config.json"
+            path.write_text(json.dumps({"possession": {"acquire_frames": 4}}), encoding="utf-8")
+            config = load_config(path)
+        self.assertEqual(config["possession"].acquire_frames, 4)
+        self.assertEqual(config["source"], "tactical")
+
+    def test_self_check_runs_without_competition_data(self):
+        completed = subprocess.run(
+            [sys.executable, "-m", "starter_v3.run_e01", "--self-check"],
+            cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("synthetic E01 self-check passed", completed.stdout)
+
+    def test_missing_data_fails_clearly_and_writes_no_candidate(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder_path = Path(folder)
+            config_path = folder_path / "config.json"
+            candidate = folder_path / "out" / "candidate.csv"
+            config_path.write_text(json.dumps({"data_dir": str(folder_path / "missing")}), encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, "-m", "starter_v3.run_e01", "--config", str(config_path),
+                 "--output", str(candidate)],
+                cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False,
+            )
+        self.assertEqual(completed.returncode, 2)
+        self.assertIn("match data not found", completed.stderr)
+        self.assertFalse(candidate.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

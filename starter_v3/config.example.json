@@ -1,0 +1,25 @@
+{
+  "source": "tactical",
+  "data_dir": null,
+  "output": ".local-checkpoints/phase5/e01_submission.csv",
+  "diagnostics": ".local-checkpoints/phase5/e01_diagnostics.json",
+  "metadata": ".local-checkpoints/phase5/e01_run_metadata.json",
+  "possession": {
+    "control_radius_m": 1.5,
+    "min_team_margin_m": 0.5,
+    "min_observation_confidence": 0.6,
+    "acquire_frames": 3,
+    "max_missing_frames": 25,
+    "max_uncertain_frames": 12,
+    "pitch_length_m": 105.3,
+    "pitch_width_m": 68.0,
+    "out_of_bounds_margin_m": 0.5,
+    "restart_ball_speed_max_mps": 0.5,
+    "stationary_ball_speed_max_mps": 0.25,
+    "stationary_player_speed_max_mps": 0.4,
+    "min_players_for_motion": 8,
+    "stationary_player_fraction": 0.8,
+    "deadball_confirm_frames": 2,
+    "contradiction_confidence": 0.8
+  }
+}
