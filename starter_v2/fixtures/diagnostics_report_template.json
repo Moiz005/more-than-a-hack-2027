@@ -1,0 +1,21 @@
+{
+  "frame_count": 0,
+  "observations": {
+    "ball_missing_frames": 0,
+    "ball_missing_fraction": 0.0,
+    "ball_missing_during_predicted_possession_frames": 0,
+    "ball_missing_during_predicted_possession_fraction": 0.0
+  },
+  "inferences": {
+    "predicted_possession_count": 0,
+    "predicted_spell_duration_seconds": {"min": 0.0, "median": 0.0, "p90": 0.0, "max": 0.0},
+    "predicted_label_share": {"H": 0.0, "A": 0.0, "D": 0.0, "X": 0.0},
+    "predicted_transitions": {},
+    "runtime_seconds": 0.0
+  },
+  "consistency_checks": {
+    "high_confidence_prediction_evidence_contradictions": 0,
+    "evidence_threshold": 0.9
+  },
+  "ground_truth": {"used": false, "accuracy_or_score_computed": false}
+}
