@@ -329,7 +329,7 @@ class TagAblationAccumulator:
 
     def report(self) -> Dict[str, object]:
         return {
-            "comparison": "E03 tags enabled vs same-input E02 tags disabled",
+            "comparison": "E03 phase/team tag_evidence enabled vs E02 tag_evidence omitted; restart context shared",
             "frame_count": self.frame_count,
             "frames_with_changed_team_evidence_confidence": self.confidence_changed,
             "frames_with_changed_team_evidence": self.team_evidence_changed,

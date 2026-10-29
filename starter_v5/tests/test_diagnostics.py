@@ -48,6 +48,7 @@ class E02DiagnosticsTests(unittest.TestCase):
         self.assertEqual(report["frames_with_changed_team_evidence_confidence"], 1)
         self.assertEqual(report["frames_with_changed_team_evidence"], 1)
         self.assertFalse(report["ground_truth_used"])
+        self.assertIn("restart context shared", report["comparison"])
         self.assertNotIn("frame_rows", report)
 
     def test_tag_ablation_rejects_misaligned_frames(self):
