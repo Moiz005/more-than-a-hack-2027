@@ -1,0 +1,13 @@
+{
+  "evidence_mode": "e03",
+  "source": "tactical",
+  "data_dir": null,
+  "output": ".local-checkpoints/phase7/e03_candidate.csv",
+  "diagnostics": ".local-checkpoints/phase7/e03_diagnostics.json",
+  "metadata": ".local-checkpoints/phase7/e03_metadata.json",
+  "possession": {},
+  "features": {},
+  "tag_features": {
+    "enabled": true
+  }
+}
