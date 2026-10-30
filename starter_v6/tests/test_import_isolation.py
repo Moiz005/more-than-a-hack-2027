@@ -67,9 +67,9 @@ print(json.dumps({'old': old, 'paths': paths}, sort_keys=True))
     def test_synthetic_intermediates_and_labels_match_frozen_tree(self):
         script = """
 import json
-from starter_v5.inference import iter_infer_e02
-from starter_v5.possession import FrameEvidence, PlayerEvidence, PossessionConfig
-from starter_v5.features import E02Config
+from starter_v6.inference import iter_infer_e02
+from starter_v6.possession import FrameEvidence, PlayerEvidence, PossessionConfig
+from starter_v6.features import E02Config
 frames = [
     FrameEvidence(0, 1, (0.0, 0.0), ()),
     FrameEvidence(1, 1, (0.4, 0.0), (PlayerEvidence('H', 0.5, 0.0),)),
