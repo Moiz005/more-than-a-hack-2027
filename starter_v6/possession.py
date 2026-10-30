@@ -308,6 +308,69 @@ class RawPlayStateObservation:
     boundary_context_age_frames: Optional[int]
 
 
+class StatefulDeadBallDetector:
+    """Advance the shared stateful dead-ball evidence stream one frame at a time.
+
+    This owns only temporal raw-cue context.  Confirmation remains a separate
+    caller concern so E01 and E02 retain their existing confirmation behavior.
+    """
+
+    def __init__(self) -> None:
+        self._previous_frame: Optional[int] = None
+        self._previous_half: Optional[int] = None
+        self._missing_frames = 0
+        self._boundary_age: Optional[int] = None
+        self._last_boundary_frame: Optional[int] = None
+
+    def observe(
+        self,
+        frame: FrameEvidence,
+        team: TeamObservation,
+        config: PossessionConfig,
+    ) -> RawPlayStateObservation:
+        if self._previous_frame is not None and frame.frame != self._previous_frame + 1:
+            raise ValueError("frames must be contiguous and ordered")
+        if self._previous_half is not None and frame.half != self._previous_half:
+            self._missing_frames = 0
+            self._boundary_age = None
+            self._last_boundary_frame = None
+        self._previous_frame, self._previous_half = frame.frame, frame.half
+
+        raw = observe_dead_ball(frame, team, config)
+        distance = _boundary_distance(frame, config)
+        if distance is not None and distance <= config.out_of_bounds_margin_m:
+            self._last_boundary_frame = frame.frame
+            self._boundary_age = 0
+        elif self._last_boundary_frame is not None and frame.ball_xy is not None:
+            self._boundary_age = frame.frame - self._last_boundary_frame
+            if self._boundary_age > config.boundary_disappearance_pre_frames:
+                self._last_boundary_frame = None
+                self._boundary_age = None
+
+        if frame.ball_xy is None:
+            self._missing_frames += 1
+            if (
+                self._last_boundary_frame is not None
+                and self._boundary_age is not None
+                and self._missing_frames >= config.boundary_disappearance_min_missing_frames
+            ):
+                raw = DeadBallObservation(
+                    ("near_boundary_disappearance",), 0.7,
+                    source=("visibility_gap", "boundary_context"),
+                    validity=("ball_missing", "boundary_pre_context", "long_gap"),
+                    event_context="boundary_disappearance",
+                    live_counterevidence=("missing_ball",), confirmable=False,
+                    dead_score=0.7, live_score=0.15,
+                    confirmation_family="near_boundary_disappearance",
+                )
+        else:
+            self._missing_frames = 0
+        return RawPlayStateObservation(
+            frame.frame, frame.half, team, raw,
+            self._missing_frames, self._boundary_age,
+        )
+
+
 def _boundary_distance(frame: FrameEvidence, config: PossessionConfig) -> Optional[float]:
     if frame.ball_xy is None:
         return None
@@ -324,51 +387,10 @@ def iter_raw_play_state(
     A near-boundary disappearance is a candidate only.  It is explicitly marked
     non-confirmable so missingness cannot become D without independent evidence.
     """
-    previous_frame: Optional[int] = None
-    previous_half: Optional[int] = None
-    missing_frames = 0
-    boundary_age: Optional[int] = None
-    last_boundary_frame: Optional[int] = None
+    detector = StatefulDeadBallDetector()
     for frame in frames:
-        if previous_frame is not None and frame.frame != previous_frame + 1:
-            raise ValueError("frames must be contiguous and ordered")
-        if previous_half is not None and frame.half != previous_half:
-            missing_frames = 0
-            boundary_age = None
-            last_boundary_frame = None
-        previous_frame, previous_half = frame.frame, frame.half
         team = observe_team(frame, config)
-        raw = observe_dead_ball(frame, team, config)
-        distance = _boundary_distance(frame, config)
-        if distance is not None and distance <= config.out_of_bounds_margin_m:
-            last_boundary_frame = frame.frame
-            boundary_age = 0
-        elif last_boundary_frame is not None and frame.ball_xy is not None:
-            boundary_age = frame.frame - last_boundary_frame
-            if boundary_age > config.boundary_disappearance_pre_frames:
-                last_boundary_frame = None
-                boundary_age = None
-
-        if frame.ball_xy is None:
-            missing_frames += 1
-            if (
-                last_boundary_frame is not None
-                and boundary_age is not None
-                and missing_frames >= config.boundary_disappearance_min_missing_frames
-            ):
-                raw = DeadBallObservation(
-                    ("near_boundary_disappearance",), 0.7, source=("visibility_gap", "boundary_context"),
-                    validity=("ball_missing", "boundary_pre_context", "long_gap"),
-                    event_context="boundary_disappearance",
-                    live_counterevidence=("missing_ball",), confirmable=False,
-                    dead_score=0.7, live_score=0.15,
-                    confirmation_family="near_boundary_disappearance",
-                )
-        else:
-            missing_frames = 0
-        yield RawPlayStateObservation(
-            frame.frame, frame.half, team, raw, missing_frames, boundary_age,
-        )
+        yield detector.observe(frame, team, config)
 
 
 def confirm_dead_ball(

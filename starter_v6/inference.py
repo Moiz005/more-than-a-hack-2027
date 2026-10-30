@@ -12,9 +12,9 @@ from starter_v6.possession import (
     FrameInference,
     PossessionConfig,
     TeamObservation,
+    StatefulDeadBallDetector,
     confirm_dead_ball,
     finalize_dead_ball,
-    observe_dead_ball,
 )
 from starter_v6.tag_features import TagEvidence
 from starter_v6.emissions import FrameEmission, fuse_evidence
@@ -241,6 +241,7 @@ def iter_infer_e02(
     gap_support_start: Optional[int] = None
     gap_attempted = False
     maximum_buffered_gap = min(feature_config.gap_max_frames, possession_config.max_missing_frames)
+    dead_ball_detector = StatefulDeadBallDetector()
 
     tags = iter(tag_evidence) if tag_evidence is not None else None
     for features in iter_frame_features(frames, feature_config):
@@ -268,7 +269,7 @@ def iter_infer_e02(
         previous_half = frame.half
 
         team = _team_evidence(features, possession_config, feature_config, tag)
-        raw_dead = observe_dead_ball(frame, team, possession_config)
+        raw_dead = dead_ball_detector.observe(frame, team, possession_config).dead_ball_evidence
         if frame.half == 0:
             yield from _resolve_gap(
                 pending_gap, None, None, gap_attempted,
