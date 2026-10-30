@@ -1,0 +1,340 @@
+"""Adapters and aggregate-only diagnostics for the local E01 pipeline."""
+
+from __future__ import annotations
+
+import math
+from collections import Counter
+from statistics import median
+from typing import Dict, Iterable, Iterator
+
+from starter_v4.ingestion import ATDFrame, ATDMetadata, SmartTagEvent
+from starter_v4.possession import FrameEvidence, FrameInference, PlayerEvidence
+
+
+RESTART_TYPES = frozenset({
+    "throw-in", "corner kick", "goal kick", "free kick",
+    "kick off (after goal)", "kick off (start)",
+})
+
+
+def restart_frame_mask(events: Iterable[SmartTagEvent], frame_count: int) -> bytearray:
+    """Mark set-piece restart context, not possession labels, on half-open tag intervals."""
+    if frame_count < 0:
+        raise ValueError("frame_count must be non-negative")
+    mask = bytearray(frame_count)
+    for event in events:
+        if event.start_frame < 0 or event.end_frame < event.start_frame or event.end_frame > frame_count:
+            raise ValueError("Smart Tag interval is outside the frame timeline")
+        code = " ".join(event.code.casefold().split())
+        tag_type = " ".join((event.tags.get("Type") or "").casefold().split())
+        if code != "set pieces" or tag_type not in RESTART_TYPES:
+            continue
+        mask[event.start_frame:event.end_frame] = b"\x01" * (event.end_frame - event.start_frame)
+    return mask
+
+
+def frame_evidence_from_atd(
+    raw: ATDFrame,
+    metadata: ATDMetadata,
+    half: int,
+    restart_context: bool,
+) -> FrameEvidence:
+    """Convert one aligned ATD row; absent coordinates never become physical (0, 0)."""
+    if raw.frame_id != raw.video_frame + 1:
+        raise ValueError("ATD frame_id must be video_frame + 1")
+    if len(raw.players) != len(metadata.slots):
+        raise ValueError("ATD player slot count does not match metadata")
+    if half not in {0, 1, 2}:
+        raise ValueError("half must be 0, 1, or 2")
+    players = []
+    for slot, observation in zip(metadata.slots, raw.players):
+        if not observation.valid:
+            continue
+        if not math.isfinite(observation.x_m) or not math.isfinite(observation.y_m):
+            raise ValueError("valid player coordinates must be finite")
+        speed = observation.speed_mps if observation.speed_valid else None
+        players.append(PlayerEvidence(slot.team, observation.x_m, observation.y_m, speed, slot.index))
+    if raw.ball.valid:
+        if not math.isfinite(raw.ball.x_m) or not math.isfinite(raw.ball.y_m):
+            raise ValueError("valid ball coordinates must be finite")
+        ball_xy = (raw.ball.x_m, raw.ball.y_m)
+        ball_speed = raw.ball.speed_mps if raw.ball.speed_valid else None
+    else:
+        ball_xy, ball_speed = None, None
+    return FrameEvidence(
+        frame=raw.video_frame,
+        half=half,
+        ball_xy=ball_xy,
+        players=tuple(players),
+        ball_speed_mps=ball_speed,
+        restart_context=restart_context,
+    )
+
+
+def iter_frame_evidence(
+    raw_frames: Iterable[ATDFrame],
+    metadata: ATDMetadata,
+    half_by_frame: bytearray,
+    restart_mask: bytearray,
+) -> Iterator[FrameEvidence]:
+    """Adapt every tactical row in strict 0-based order without materializing ATD arrays."""
+    if len(half_by_frame) != len(restart_mask):
+        raise ValueError("half and restart masks must have the same frame count")
+    expected = 0
+    for raw in raw_frames:
+        if raw.video_frame != expected:
+            raise ValueError("expected video_frame {}, found {}".format(expected, raw.video_frame))
+        if raw.frame_id != expected + 1:
+            raise ValueError("expected frame_id {}, found {}".format(expected + 1, raw.frame_id))
+        yield frame_evidence_from_atd(
+            raw, metadata, half_by_frame[expected], bool(restart_mask[expected])
+        )
+        expected += 1
+    if expected != len(half_by_frame):
+        raise ValueError("expected {} tactical rows, found {}".format(len(half_by_frame), expected))
+
+
+class InferenceSummaryAccumulator:
+    """Incrementally collect diagnostics so full-match inference stays streaming."""
+
+    def __init__(self, contradiction_confidence: float = 0.8) -> None:
+        if not math.isfinite(contradiction_confidence) or not 0 <= contradiction_confidence <= 1:
+            raise ValueError("contradiction_confidence must be in [0, 1]")
+        self.contradiction_confidence = contradiction_confidence
+        self.label_counts = Counter()
+        self.transitions = Counter()
+        self.durations = []
+        self.cue_frames = Counter()
+        self.observed = self.missing_possession = self.contradictions = 0
+        self.confirmed_deadball_frames = self.frame_count = 0
+        self.previous_label = None
+        self.spell_team = None
+        self.spell_length = 0
+
+    def add(self, result: FrameInference) -> None:
+        if result.label not in {"H", "A", "D", "X"}:
+            raise ValueError("inference has an invalid label")
+        self.frame_count += 1
+        label = result.label
+        self.label_counts[label] += 1
+        if self.previous_label is not None and self.previous_label != label:
+            self.transitions[self.previous_label + "->" + label] += 1
+        self.previous_label = label
+        if label in {"H", "A"}:
+            if self.spell_team == label:
+                self.spell_length += 1
+            else:
+                if self.spell_length:
+                    self.durations.append(self.spell_length)
+                self.spell_team, self.spell_length = label, 1
+        elif self.spell_length:
+            self.durations.append(self.spell_length)
+            self.spell_team, self.spell_length = None, 0
+        self.observed += int(result.team_evidence.ball_observed)
+        self.missing_possession += int(label in {"H", "A"} and not result.team_evidence.ball_observed)
+        self.contradictions += int(
+            result.team_evidence.team is not None
+            and result.team_evidence.confidence >= self.contradiction_confidence
+            and label in {"H", "A", "D"}
+            and label != result.team_evidence.team
+        )
+        self.cue_frames.update(result.dead_ball_evidence.cues)
+        self.confirmed_deadball_frames += int(result.dead_ball_evidence.confirmed)
+
+    def report(self, runtime_seconds: float) -> Dict[str, object]:
+        """Build a non-reconstructive aggregate report without ground-truth fields."""
+        if not math.isfinite(runtime_seconds) or runtime_seconds < 0:
+            raise ValueError("runtime_seconds must be finite and non-negative")
+        durations = list(self.durations)
+        if self.spell_length:
+            durations.append(self.spell_length)
+        durations_sorted = sorted(durations)
+        q90 = (
+            durations_sorted[min(len(durations_sorted) - 1, int(0.9 * len(durations_sorted)))]
+            if durations_sorted else 0
+        )
+        frame_count = self.frame_count
+        return {
+            "frame_count": frame_count,
+            "observations": {
+                "ball_observed_frames": self.observed,
+                "ball_missing_frames": frame_count - self.observed,
+                "ball_missing_during_predicted_possession_frames": self.missing_possession,
+                "dead_ball_evidence_cue_frames": dict(sorted(self.cue_frames.items())),
+                "confirmed_dead_ball_frames": self.confirmed_deadball_frames,
+            },
+            "inferences": {
+                "predicted_label_counts": {label: self.label_counts.get(label, 0) for label in "HADX"},
+                "predicted_label_share": {
+                    label: (self.label_counts.get(label, 0) / float(frame_count) if frame_count else 0.0)
+                    for label in "HADX"
+                },
+                "predicted_possession_count": len(durations),
+                "possession_duration_frames": {
+                    "min": min(durations) if durations else 0,
+                    "median": median(durations) if durations else 0,
+                    "p90": q90,
+                    "max": max(durations) if durations else 0,
+                },
+                "transitions": dict(sorted(self.transitions.items())),
+                "runtime_seconds": runtime_seconds,
+            },
+            "consistency_checks": {
+                "high_confidence_prediction_evidence_contradictions": self.contradictions,
+                "confidence_threshold": self.contradiction_confidence,
+                "interpretation": "model evidence consistency only; not ground-truth accuracy",
+            },
+            "ground_truth": {"used": False, "accuracy_or_score_computed": False},
+        }
+
+
+def summarize_inferences(
+    results: Iterable[FrameInference],
+    runtime_seconds: float,
+    contradiction_confidence: float = 0.8,
+) -> Dict[str, object]:
+    """Summarize predictions and evidence without accepting or computing ground truth."""
+    accumulator = InferenceSummaryAccumulator(contradiction_confidence)
+    for result in results:
+        accumulator.add(result)
+    return accumulator.report(runtime_seconds)
+
+
+class E02SummaryAccumulator:
+    """Aggregate-only feature and gap diagnostics; never stores frame rows or coordinates."""
+
+    def __init__(self, contradiction_confidence: float = 0.8) -> None:
+        self.inferences = InferenceSummaryAccumulator(contradiction_confidence)
+        self.feature_counts = Counter()
+        self.quality_flags = Counter()
+        self.gap_lengths = Counter()
+        self.gap_decisions = Counter()
+        self.gap_decision_reasons = Counter()
+        self.confidence_bins = Counter()
+        self.emission_counts = Counter()
+        self.tag_relations = Counter()
+        self.gap_run = 0
+        self.previous_half = None
+
+    def _close_gap(self) -> None:
+        if not self.gap_run:
+            return
+        category = "short" if self.gap_run <= 5 else "medium" if self.gap_run <= 25 else "long"
+        self.gap_lengths[category] += 1
+        self.gap_run = 0
+
+    def add(self, result) -> None:
+        self.inferences.add(result.inference)
+        features = result.features
+        emission = result.emission
+        self.tag_relations[result.tag_relation] += 1
+        values = (emission.home, emission.away, emission.dead)
+        self.emission_counts["frames"] += 1
+        self.emission_counts["informative"] += int(emission.informative)
+        self.emission_counts["uninformative"] += int(not emission.informative)
+        self.emission_counts["invalid"] += int(
+            any(not math.isfinite(value) or value < 0.0 or value > 1.0 for value in values)
+            or not math.isclose(sum(values), 1.0, rel_tol=0.0, abs_tol=1e-9)
+        )
+        if self.previous_half is not None and features.frame.half != self.previous_half:
+            self._close_gap()
+        self.previous_half = features.frame.half
+        if features.quality.ball_missing:
+            self.gap_run += 1
+        else:
+            self._close_gap()
+        self.feature_counts["frames"] += 1
+        self.feature_counts["ball_observed"] += int(features.quality.ball_observed)
+        self.feature_counts["home_topk_available"] += int(features.spatial.topk_home_mean_m is not None)
+        self.feature_counts["away_topk_available"] += int(features.spatial.topk_away_mean_m is not None)
+        self.feature_counts["ball_displacement_available"] += int(features.motion.derived_ball_speed_mps is not None)
+        self.feature_counts["home_team_motion_available"] += int(features.motion.home_centroid_speed_mps is not None)
+        self.feature_counts["away_team_motion_available"] += int(features.motion.away_centroid_speed_mps is not None)
+        self.feature_counts["gap_candidate_frames"] += int(features.motion.gap_candidate_team is not None)
+        observed_team = result.inference.team_evidence.team
+        self.feature_counts["team_evidence_h"] += int(observed_team == "H")
+        self.feature_counts["team_evidence_a"] += int(observed_team == "A")
+        self.feature_counts["team_evidence_unknown"] += int(observed_team is None)
+        confidence = result.inference.team_evidence.confidence
+        bin_index = min(4, int(confidence * 5))
+        self.confidence_bins["{:.1f}-{:.1f}".format(bin_index * 0.2, (bin_index + 1) * 0.2)] += 1
+        self.quality_flags.update(features.quality.flags)
+        if result.gap_decision in {"accepted", "rejected"}:
+            self.gap_decisions[result.gap_decision] += 1
+            self.gap_decision_reasons[result.gap_decision_reason] += 1
+
+    def report(self, runtime_seconds: float, peak_memory_mb: Optional[float] = None):
+        self._close_gap()
+        report = self.inferences.report(runtime_seconds)
+        frame_count = self.feature_counts["frames"]
+        report["e02_features"] = {
+            "availability_counts": dict(sorted(self.feature_counts.items())),
+            "availability_share": {
+                name: (count / float(frame_count) if frame_count else 0.0)
+                for name, count in sorted(self.feature_counts.items()) if name != "frames"
+            },
+            "quality_flag_frames": dict(sorted(self.quality_flags.items())),
+            "team_evidence_confidence_histogram": dict(sorted(self.confidence_bins.items())),
+        }
+        report["gap_analysis"] = {
+            "missing_gap_count_by_length": dict(sorted(self.gap_lengths.items())),
+            "gap_candidate_frames": self.feature_counts["gap_candidate_frames"],
+            "transition_attempts": sum(self.gap_decisions.values()),
+            "accepted_transitions": self.gap_decisions["accepted"],
+            "rejected_transitions": self.gap_decisions["rejected"],
+            "decision_reasons": dict(sorted(self.gap_decision_reasons.items())),
+            "interpretation": "feature-supported inference behavior only; not ground-truth accuracy",
+        }
+        report["emissions"] = {
+            "states": ["H", "A", "D"],
+            "frame_count": self.emission_counts["frames"],
+            "informative_frames": self.emission_counts["informative"],
+            "uninformative_frames": self.emission_counts["uninformative"],
+            "invalid_emission_frames": self.emission_counts["invalid"],
+            "interpretation": "normalized evidence scores, not ground-truth probabilities",
+        }
+        report["tag_fusion"] = {
+            "frames_by_relation": dict(sorted(self.tag_relations.items())),
+            "interpretation": "spatial/tag relation counts; not accuracy or per-frame effects",
+        }
+        if peak_memory_mb is not None:
+            report["resources"] = {"peak_memory_mb": peak_memory_mb}
+        return report
+
+
+class TagAblationAccumulator:
+    """Count aggregate E03 versus same-frame tag-disabled E02 effects only."""
+
+    def __init__(self) -> None:
+        self.frame_count = 0
+        self.confidence_changed = 0
+        self.team_evidence_changed = 0
+        self.emission_argmax_changed = 0
+        self.final_label_changed = 0
+
+    def add(self, with_tags, without_tags) -> None:
+        tagged, baseline = with_tags.inference, without_tags.inference
+        if tagged.frame != baseline.frame or with_tags.emission.frame != without_tags.emission.frame:
+            raise ValueError("tag ablation results must refer to the same frame")
+        if tagged.half != baseline.half or with_tags.emission.half != without_tags.emission.half:
+            raise ValueError("tag ablation results must refer to the same half")
+        self.frame_count += 1
+        self.confidence_changed += int(tagged.team_evidence.confidence != baseline.team_evidence.confidence)
+        self.team_evidence_changed += int(tagged.team_evidence.team != baseline.team_evidence.team)
+        tagged_scores = (with_tags.emission.home, with_tags.emission.away, with_tags.emission.dead)
+        baseline_scores = (without_tags.emission.home, without_tags.emission.away, without_tags.emission.dead)
+        self.emission_argmax_changed += int(max(range(3), key=tagged_scores.__getitem__) !=
+                                            max(range(3), key=baseline_scores.__getitem__))
+        self.final_label_changed += int(tagged.label != baseline.label)
+
+    def report(self) -> Dict[str, object]:
+        return {
+            "comparison": "E03 phase/team tag_evidence enabled vs E02 tag_evidence omitted; restart context shared",
+            "frame_count": self.frame_count,
+            "frames_with_changed_team_evidence_confidence": self.confidence_changed,
+            "frames_with_changed_team_evidence": self.team_evidence_changed,
+            "frames_with_changed_emission_argmax": self.emission_argmax_changed,
+            "frames_with_changed_final_label": self.final_label_changed,
+            "ground_truth_used": False,
+            "interpretation": "causal feature ablation counts only; not accuracy or superiority",
+        }

@@ -1,0 +1,20 @@
+{
+  "evidence_mode": "e03",
+  "source": "tactical",
+  "data_dir": null,
+  "output": ".local-checkpoints/phase8/e04_candidate.csv",
+  "diagnostics": ".local-checkpoints/phase8/e04_diagnostics.json",
+  "metadata": ".local-checkpoints/phase8/e04_metadata.json",
+  "possession": {},
+  "features": {},
+  "tag_features": {
+    "enabled": true
+  },
+  "hmm": {
+    "initial": [0.45, 0.45, 0.1],
+    "transitions": [[0.98, 0.01, 0.01], [0.01, 0.98, 0.01], [0.025, 0.025, 0.95]],
+    "emission_floor": 1e-12,
+    "emission_weight": 1.0,
+    "temperature": 1.0
+  }
+}
