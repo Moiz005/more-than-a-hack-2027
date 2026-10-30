@@ -54,7 +54,7 @@ class RuntimeRestartActionDetector:
 
         if frame.ball_xy is None:
             self._missing_seen = True
-            return frame
+            return replace(frame, restart_context_consumed=self._action_emitted)
 
         displacement = None
         if self._previous_ball_xy is not None:
@@ -92,9 +92,8 @@ class RuntimeRestartActionDetector:
         elif displacement is not None and displacement < self._MIN_DISPLACEMENT_M:
             self._stationary_seen = True
         self._previous_ball_xy = frame.ball_xy
-        if action is None:
-            return frame
-        return replace(frame, restart_action=action)
+        return replace(frame, restart_action=action or frame.restart_action,
+                       restart_context_consumed=self._action_emitted)
 
     def _reset_context(self) -> None:
         self._previous_ball_xy = None

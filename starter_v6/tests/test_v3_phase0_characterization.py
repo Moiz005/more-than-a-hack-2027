@@ -1,4 +1,4 @@
-"""Invented overlong-tag baseline. Phase 0 deliberately preserves this defect."""
+"""Exact Phase 0 invented fixture, retained as the Phase 1 regression."""
 from dataclasses import replace
 import unittest
 
@@ -23,17 +23,17 @@ def overlong_tag_trace():
 class V3Phase0Characterization(unittest.TestCase):
     def test_baseline_false_second_dead_interval_and_redundant_restart(self):
         frames, results, labels = overlong_tag_trace()
-        self.assertEqual(labels, 'DDDHHDDDD')
+        self.assertEqual(labels, 'DDDHHHHHH')
         self.assertEqual(frames[3].restart_action, 'restart_delivery')
         self.assertTrue(all(f.restart_action is None for f in frames[4:]))
-        self.assertEqual(results[5].inference.dead_ball_evidence.cues, ('restart_stationary',))
+        self.assertTrue(all(f.restart_context_consumed for f in frames[3:]))
+        self.assertEqual(results[5].inference.dead_ball_evidence.cues, ())
         self.assertFalse(results[5].inference.dead_ball_evidence.confirmed)
-        self.assertTrue(results[6].inference.dead_ball_evidence.confirmed)
-        self.assertAlmostEqual(results[6].emission.dead, .99)
+        self.assertFalse(results[6].inference.dead_ball_evidence.confirmed)
+        self.assertAlmostEqual(results[6].emission.dead, 0.)
         disabled = list(iter_infer_e02(replace(f, restart_action=None) for f in frames))
         self.assertEqual([r.emission for r in results], [r.emission for r in disabled])
 
-    @unittest.expectedFailure
     def test_desired_live_return_consumes_old_restart_context(self):
         # Intended synthetic semantics: no new stoppage occurs after delivery.
         self.assertEqual(overlong_tag_trace()[2], 'DDDHHHHHH')

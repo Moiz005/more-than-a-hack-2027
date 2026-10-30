@@ -32,6 +32,9 @@ class FrameEvidence:
     # An observed restart action is distinct from the preceding award/context.
     # It never makes a frame dead by itself.
     restart_action: Optional[str] = None
+    # Adapter-owned lifecycle for this uninterrupted context mask run.
+    # Default preserves compatibility with callers supplying raw evidence.
+    restart_context_consumed: bool = False
 
 
 @dataclass(frozen=True)
@@ -260,7 +263,8 @@ def observe_dead_ball(
     if team_observation.team is not None:
         live_counterevidence.append("nearby_team_control")
 
-    if frame.restart_context and frame.ball_speed_mps <= config.restart_ball_speed_max_mps:
+    if (frame.restart_context and not frame.restart_context_consumed
+            and frame.ball_speed_mps <= config.restart_ball_speed_max_mps):
         return DeadBallObservation(
             ("restart_stationary",), 0.75, source=("restart_context",),
             validity=("coordinate_valid", "stationary_ball"),
