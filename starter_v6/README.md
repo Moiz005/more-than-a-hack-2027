@@ -33,6 +33,21 @@ Repeat with distinct `run2` output paths to verify byte-identical generation. In
 
 Metadata contains the transitive executed project-source manifest and hash, dependency versions, config/input SHA256 fingerprints, Git revision and dirty-state indicator, Python/platform identifiers, output hash, runtime, and peak process memory. Input hashes and metadata are local provenance aids only; do not publish them. No raw data, per-frame emissions, backpointers, coordinates, or frame-level differences are written to diagnostics.
 
+Phase 2 synthetic integration traces use invented `FrameEvidence` and Smart Tag
+fixtures only; they never load match assets:
+
+```bash
+.venv/bin/python -m unittest starter_v6.tests.test_synthetic_integration
+.venv/bin/python -m starter_v6.trace_synthetic --all \
+  --output .local-checkpoints/phase2/synthetic_trace_all.json
+```
+
+The trace records raw dead/live cues, quality flags, gap evidence, team
+evidence, tag relations, confirmed dead state, emissions, Viterbi labels and
+possession spells. Fixtures are labeled as characterization or acceptance
+expectations; known pre-Phase-2 weaknesses are reported as failure signals
+rather than hidden by changing expected outputs.
+
 ## Limitations and status
 
 ### Differences from E01–E03
