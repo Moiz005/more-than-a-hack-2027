@@ -70,3 +70,17 @@ consumed old context from genuinely new independent stoppage evidence.
   starter_v6.run_e04 --self-check. Full results and local run metadata are
   recorded under .local-checkpoints/v3/phase1/context_consumption/.
 - Limitation: no held-out other-game accuracy measurement or public-truth use.
+- Implementation/end-of-algorithm commit: 3804387f6ef501869507de441cfe909ac17ca627.
+- Actual full discovery: 158 passed, 0 failed, 0 expected failures, 0 skipped.
+  This includes HMM exhaustive/path arithmetic, import isolation, 14 persistence
+  tests and the new archived-baseline causal comparison. E04 self-check passed.
+- Two clean post-commit local runs passed the official validator: 199319 rows,
+  frame 0..199318. Both CSV hashes:
+  e501d82f0fb15650761e7d594cea35999166e89e54122e3392c4a052615b4763.
+- Phase 0 hash: 7596d3908f16dec3fee299ffa6538d9184a1d9ddcbd24fbb3f0e3265820583b0.
+  Output changed at 573 labels. D frames 9268 -> 8830; D runs 83 -> 72.
+  These unlabeled aggregates do not establish accuracy improvement.
+- Source/config hashes, dependency manifest and exact run paths are in each
+  run's metadata.json; configuration bytes and all HMM parameters are unchanged.
+- G1.1-G1.5: GO. Phase 2 is not implemented. New independent events inside
+  uninterrupted masks still require independent physical evidence.
