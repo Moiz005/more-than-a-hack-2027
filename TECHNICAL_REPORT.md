@@ -1,7 +1,8 @@
 # Barcelona–Athletic Club possession inference
 
-Release: `e04-v2-g7-selected`  
-Implementation commit: `11b562d028ee6ea7cee65f90bca6c2c2aea77275`  
+Final release ref: `e04-v2-g8-final-verified`
+Release commit: `56e71697c53461efcf415d9c615cbc0aded23299`
+Implementation commit: `11b562d028ee6ea7cee65f90bca6c2c2aea77275`
 Frozen fallback: `e04-c7-frozen^{}` → `7aa2f1b44b9db015a89d61fef797ebe83b4dadd2`
 
 ## Approach
