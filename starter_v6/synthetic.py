@@ -19,6 +19,7 @@ from starter_v6.possession import (
     PlayerEvidence,
     PossessionConfig,
     observe_dead_ball,
+    iter_raw_play_state,
     possession_spells,
 )
 from starter_v6.tag_features import TagEvidence, iter_tag_evidence
@@ -95,8 +96,10 @@ def player(team: str, x_m: float, y_m: float, speed_mps: Optional[float] = None,
 
 
 def frame(index: int, ball_xy, players: Iterable[PlayerEvidence] = (), *, half: int = 1,
-          ball_speed_mps: Optional[float] = None, restart_context: bool = False) -> FrameEvidence:
-    return FrameEvidence(index, half, ball_xy, tuple(players), ball_speed_mps, restart_context)
+          ball_speed_mps: Optional[float] = None, restart_context: bool = False,
+          restart_action: Optional[str] = None) -> FrameEvidence:
+    return FrameEvidence(index, half, ball_xy, tuple(players), ball_speed_mps,
+                         restart_context, restart_action)
 
 
 def tag_event(code: str, start: int, end: int, team: Optional[str] = None,
@@ -137,13 +140,13 @@ def fixture_catalog() -> Tuple[SyntheticFixture, ...]:
         ),
         SyntheticFixture(
             "restart_nearby_controller",
-            "The same restart with a nearby home controller; current baseline characterization.",
+            "The same restart with a nearby home controller; raw cue remains visible with live counterevidence.",
             tuple(frame(i, (10.0, 10.0), _live_players("H", x_m=10.1, speed_mps=0.0),
                         ball_speed_mps=0.1, restart_context=True) for i in range(4)),
             events=(tag_event("SET PIECES", 0, 4, "Barcelona", "Throw-in"),),
             rule_ids=("R03", "R04", "R11", "R12", "R14"),
             expected={"raw_restart_cue": True, "nearby_controller_is_live_counterevidence": True},
-            failure_signals=("baseline_raw_restart_suppressed_by_team_gate",),
+            expectation_kind="acceptance",
         ),
         SyntheticFixture(
             "overlong_set_piece",
@@ -316,6 +319,11 @@ def _row(result: E02FrameInference, raw_team, raw_dead, tag: TagEvidence) -> Dic
             "cues": list(raw_dead.cues),
             "confidence": raw_dead.confidence,
             "hard_evidence": raw_dead.hard_evidence,
+            "source": list(raw_dead.source),
+            "validity": list(raw_dead.validity),
+            "event_context": raw_dead.event_context,
+            "live_counterevidence": list(raw_dead.live_counterevidence),
+            "confirmable": raw_dead.confirmable,
         },
         "confirmed_dead": {
             "cues": list(result.inference.dead_ball_evidence.cues),

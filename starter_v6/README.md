@@ -33,8 +33,8 @@ Repeat with distinct `run2` output paths to verify byte-identical generation. In
 
 Metadata contains the transitive executed project-source manifest and hash, dependency versions, config/input SHA256 fingerprints, Git revision and dirty-state indicator, Python/platform identifiers, output hash, runtime, and peak process memory. Input hashes and metadata are local provenance aids only; do not publish them. No raw data, per-frame emissions, backpointers, coordinates, or frame-level differences are written to diagnostics.
 
-Phase 2 synthetic integration traces use invented `FrameEvidence` and Smart Tag
-fixtures only; they never load match assets:
+Phase 2 and Phase 3 synthetic integration traces use invented `FrameEvidence` and
+Smart Tag fixtures only; they never load match assets:
 
 ```bash
 .venv/bin/python -m unittest starter_v6.tests.test_synthetic_integration
@@ -42,11 +42,21 @@ fixtures only; they never load match assets:
   --output .local-checkpoints/phase2/synthetic_trace_all.json
 ```
 
-The trace records raw dead/live cues, quality flags, gap evidence, team
-evidence, tag relations, confirmed dead state, emissions, Viterbi labels and
-possession spells. Fixtures are labeled as characterization or acceptance
-expectations; known pre-Phase-2 weaknesses are reported as failure signals
-rather than hidden by changing expected outputs.
+The trace records raw dead/live cues, source and validity provenance, live
+counterevidence, quality flags, gap evidence, team evidence, tag relations,
+confirmed dead state, emissions, Viterbi labels and possession spells. The raw
+play-state interface does not gate cues on resolved H/A ownership. Missing-ball
+and near-boundary-disappearance observations remain non-confirmable without
+independent support. `FrameEvidence.restart_context` is the canonical runtime
+restart-context representation; `TagEvidence` is retained as contextual
+metadata and is not counted as a second dead-ball vote. Fixtures are labeled as
+characterization or acceptance expectations; known weaknesses are reported as
+failure signals rather than hidden by changing expected outputs.
+
+Phase 3 adds `iter_raw_play_state()` for a stateful, asset-free raw cue stream.
+The configurable candidate thresholds are expressed in metres and frames in
+`config.example.json`; they are engineering hypotheses, not values tuned to the
+public five-minute labels.
 
 ## Limitations and status
 

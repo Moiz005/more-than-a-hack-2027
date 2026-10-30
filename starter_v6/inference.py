@@ -233,19 +233,27 @@ def iter_infer_e02(
             gap_support_count = 0
             gap_support_start = None
             gap_attempted = False
-            yield _result(features, "X", team, DeadBallObservation(raw_dead.cues, raw_dead.confidence, False, raw_dead.hard_evidence), tag)
+            yield _result(features, "X", team, DeadBallObservation(
+                raw_dead.cues, raw_dead.confidence, False, raw_dead.hard_evidence,
+                raw_dead.source, raw_dead.validity, raw_dead.event_context,
+                raw_dead.live_counterevidence, raw_dead.confirmable,
+            ), tag)
             continue
 
         if raw_dead.hard_evidence:
             confirmed_dead = True
             dead_candidate_count = 0
-        elif raw_dead.cues:
+        elif raw_dead.cues and raw_dead.confirmable:
             dead_candidate_count += 1
             confirmed_dead = dead_candidate_count >= possession_config.deadball_confirm_frames
         else:
             dead_candidate_count = 0
             confirmed_dead = False
-        dead = DeadBallObservation(raw_dead.cues, raw_dead.confidence, confirmed_dead, raw_dead.hard_evidence)
+        dead = DeadBallObservation(
+            raw_dead.cues, raw_dead.confidence, confirmed_dead, raw_dead.hard_evidence,
+            raw_dead.source, raw_dead.validity, raw_dead.event_context,
+            raw_dead.live_counterevidence, raw_dead.confirmable,
+        )
 
         if confirmed_dead:
             yield from _resolve_gap(

@@ -33,15 +33,13 @@ class SyntheticIntegrationTests(unittest.TestCase):
         self.assertTrue(any(fixture.expectation_kind == "characterization" for fixture in fixtures))
         self.assertTrue(all(not fixture.name.startswith("BAR-") for fixture in fixtures))
 
-    def test_trace_isolates_known_pre_phase2_failure_stages(self):
+    def test_trace_preserves_known_architecture_signals(self):
         signals = {
             signal
             for fixture in fixture_catalog()
             for signal in fixture.failure_signals
         }
         self.assertTrue({
-            "baseline_raw_restart_suppressed_by_team_gate",
-            "baseline_dead_confirmation_uses_mixed_cue_counter",
             "baseline_confirmed_dead_emission_is_one_hot",
             "gap_evidence_not_encoded_in_hmm_emission",
         }.issubset(signals))
@@ -68,14 +66,16 @@ class SyntheticIntegrationTests(unittest.TestCase):
             )
         self.assertIn("possession_spells", first)
 
-    def test_nearby_controller_is_counterfactual_and_failure_is_visible(self):
+    def test_nearby_controller_preserves_raw_restart_and_records_counterevidence(self):
         no_controller = next(item for item in fixture_catalog() if item.name == "restart_no_controller")
         nearby = next(item for item in fixture_catalog() if item.name == "restart_nearby_controller")
         no_trace = trace_fixture(no_controller).as_dict()
         nearby_trace = trace_fixture(nearby).as_dict()
         self.assertTrue(any("restart_stationary" in row["raw_dead"]["cues"] for row in no_trace["rows"]))
-        self.assertFalse(any("restart_stationary" in row["raw_dead"]["cues"] for row in nearby_trace["rows"]))
-        self.assertIn("baseline_raw_restart_suppressed_by_team_gate", nearby_trace["failure_signals"])
+        nearby_rows = [row["raw_dead"] for row in nearby_trace["rows"]]
+        self.assertTrue(any("restart_stationary" in row["cues"] for row in nearby_rows))
+        self.assertTrue(any("nearby_team_control" in row["live_counterevidence"] for row in nearby_rows))
+        self.assertTrue(all(row["event_context"] == "restart_context" for row in nearby_rows))
 
     def test_missing_ball_and_overlong_tags_are_traced_without_manual_labels(self):
         missing = next(item for item in fixture_catalog() if item.name == "live_missing_ball_and_gap_recovery")

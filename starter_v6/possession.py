@@ -29,6 +29,9 @@ class FrameEvidence:
     players: Tuple[PlayerEvidence, ...]
     ball_speed_mps: Optional[float] = None
     restart_context: bool = False
+    # An observed restart action is distinct from the preceding award/context.
+    # It never makes a frame dead by itself.
+    restart_action: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +52,9 @@ class PossessionConfig:
     stationary_player_fraction: float = 0.8
     deadball_confirm_frames: int = 2
     contradiction_confidence: float = 0.8
+    boundary_crossing_margin_m: float = 1.0
+    boundary_disappearance_pre_frames: int = 13
+    boundary_disappearance_min_missing_frames: int = 50
 
     def __post_init__(self) -> None:
         positive = (
@@ -60,7 +66,7 @@ class PossessionConfig:
             value = getattr(self, name)
             if not math.isfinite(value) or value <= 0:
                 raise ValueError("{} must be finite and positive".format(name))
-        for name in ("out_of_bounds_margin_m",):
+        for name in ("out_of_bounds_margin_m", "boundary_crossing_margin_m"):
             value = getattr(self, name)
             if not math.isfinite(value) or value < 0:
                 raise ValueError("{} must be finite and non-negative".format(name))
@@ -71,6 +77,7 @@ class PossessionConfig:
         for name in (
             "acquire_frames", "max_missing_frames", "max_uncertain_frames",
             "min_players_for_motion", "deadball_confirm_frames",
+            "boundary_disappearance_pre_frames", "boundary_disappearance_min_missing_frames",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
@@ -93,6 +100,11 @@ class DeadBallObservation:
     confidence: float
     confirmed: bool = False
     hard_evidence: bool = False
+    source: Tuple[str, ...] = ()
+    validity: Tuple[str, ...] = ()
+    event_context: Optional[str] = None
+    live_counterevidence: Tuple[str, ...] = ()
+    confirmable: bool = True
 
 
 @dataclass(frozen=True)
@@ -169,35 +181,161 @@ def observe_dead_ball(
     team_observation: TeamObservation,
     config: PossessionConfig,
 ) -> DeadBallObservation:
-    """Compute independent dead-ball cues; a missing ball or tag alone is never sufficient."""
+    """Compute raw dead-ball cues independently of resolved team ownership.
+
+    The returned object records observation provenance and counterevidence.  It is
+    not a final state decision: callers still apply temporal confirmation.
+    """
+    _validate_frame(frame)
     if frame.ball_xy is None:
-        return DeadBallObservation((), 0.0)
+        return DeadBallObservation(
+            (), 0.0, source=("ball_visibility",), validity=("ball_missing",),
+            event_context="live_observation",
+        )
     bx, by = frame.ball_xy
     margin = config.out_of_bounds_margin_m
-    outside = (
+    crossing = config.boundary_crossing_margin_m
+    beyond_margin = (
         bx < -margin or bx > config.pitch_length_m + margin
         or by < -margin or by > config.pitch_width_m + margin
     )
-    if outside:
-        return DeadBallObservation(("out_of_bounds",), 1.0, True, hard_evidence=True)
+    if beyond_margin:
+        hard = (
+            bx <= -crossing or bx >= config.pitch_length_m + crossing
+            or by <= -crossing or by >= config.pitch_width_m + crossing
+        )
+        return DeadBallObservation(
+            ("out_of_bounds",), 1.0 if hard else 0.65, False, hard,
+            source=("ball_geometry",),
+            validity=("coordinate_valid", "boundary_crossing" if hard else "boundary_candidate"),
+            event_context="boundary_crossing",
+            live_counterevidence=("nearby_team_control",) if team_observation.team else (),
+            confirmable=hard,
+        )
 
-    if team_observation.team is not None or frame.ball_speed_mps is None:
-        return DeadBallObservation((), 0.0)
+    # A restart action is the transition back to play, not a dead-ball cue.
+    if frame.restart_action is not None:
+        return DeadBallObservation(
+            (), 0.0, source=("restart_action",), validity=("live_restart",),
+            event_context="restart_action",
+            live_counterevidence=("restart_action",),
+        )
+    if frame.ball_speed_mps is None:
+        return DeadBallObservation(
+            (), 0.0, source=("ball_motion",), validity=("ball_speed_missing",),
+            event_context="live_observation",
+            live_counterevidence=("team_control",) if team_observation.team else (),
+        )
+
+    live_counterevidence = []
+    if team_observation.team is not None:
+        live_counterevidence.append("nearby_team_control")
 
     if frame.restart_context and frame.ball_speed_mps <= config.restart_ball_speed_max_mps:
-        return DeadBallObservation(("restart_stationary",), 0.75)
+        return DeadBallObservation(
+            ("restart_stationary",), 0.75, source=("restart_context",),
+            validity=("coordinate_valid", "stationary_ball"),
+            event_context="restart_context",
+            live_counterevidence=tuple(live_counterevidence),
+        )
 
     if frame.ball_speed_mps > config.stationary_ball_speed_max_mps:
-        return DeadBallObservation((), 0.0)
+        return DeadBallObservation(
+            (), 0.0, source=("ball_motion",), validity=("ball_moving",),
+            event_context="live_motion", live_counterevidence=tuple(live_counterevidence),
+        )
     speeds = [player.speed_mps for player in frame.players if player.speed_mps is not None]
     if len(speeds) < config.min_players_for_motion:
-        return DeadBallObservation((), 0.0)
+        return DeadBallObservation(
+            (), 0.0, source=("collective_motion",), validity=("insufficient_motion_tracks",),
+            event_context="live_observation", live_counterevidence=tuple(live_counterevidence),
+        )
     stationary_fraction = sum(
         speed <= config.stationary_player_speed_max_mps for speed in speeds
     ) / float(len(speeds))
     if stationary_fraction >= config.stationary_player_fraction:
-        return DeadBallObservation(("stationary_context",), 0.55)
-    return DeadBallObservation((), 0.0)
+        return DeadBallObservation(
+            ("stationary_context",), 0.55, source=("collective_motion",),
+            validity=("coordinate_valid", "stationary_players"),
+            event_context="motion_context", live_counterevidence=tuple(live_counterevidence),
+        )
+    return DeadBallObservation(
+        (), 0.0, source=("collective_motion",), validity=("players_moving",),
+        event_context="live_motion", live_counterevidence=tuple(live_counterevidence),
+    )
+
+
+@dataclass(frozen=True)
+class RawPlayStateObservation:
+    """A raw, traceable play-state observation before H/A/D/X inference."""
+
+    frame: int
+    half: int
+    team_evidence: TeamObservation
+    dead_ball_evidence: DeadBallObservation
+    missing_frames: int
+    boundary_context_age_frames: Optional[int]
+
+
+def _boundary_distance(frame: FrameEvidence, config: PossessionConfig) -> Optional[float]:
+    if frame.ball_xy is None:
+        return None
+    x, y = frame.ball_xy
+    return min(x, config.pitch_length_m - x, y, config.pitch_width_m - y)
+
+
+def iter_raw_play_state(
+    frames: Iterable[FrameEvidence],
+    config: PossessionConfig = PossessionConfig(),
+) -> Iterator[RawPlayStateObservation]:
+    """Yield raw cues with short boundary context and missing-ball duration.
+
+    A near-boundary disappearance is a candidate only.  It is explicitly marked
+    non-confirmable so missingness cannot become D without independent evidence.
+    """
+    previous_frame: Optional[int] = None
+    previous_half: Optional[int] = None
+    missing_frames = 0
+    boundary_age: Optional[int] = None
+    last_boundary_frame: Optional[int] = None
+    for frame in frames:
+        if previous_frame is not None and frame.frame != previous_frame + 1:
+            raise ValueError("frames must be contiguous and ordered")
+        if previous_half is not None and frame.half != previous_half:
+            missing_frames = 0
+            boundary_age = None
+            last_boundary_frame = None
+        previous_frame, previous_half = frame.frame, frame.half
+        team = observe_team(frame, config)
+        raw = observe_dead_ball(frame, team, config)
+        distance = _boundary_distance(frame, config)
+        if distance is not None and distance <= config.out_of_bounds_margin_m:
+            last_boundary_frame = frame.frame
+            boundary_age = 0
+        elif last_boundary_frame is not None and frame.ball_xy is not None:
+            boundary_age = frame.frame - last_boundary_frame
+            if boundary_age > config.boundary_disappearance_pre_frames:
+                last_boundary_frame = None
+                boundary_age = None
+
+        if frame.ball_xy is None:
+            missing_frames += 1
+            if (
+                last_boundary_frame is not None
+                and boundary_age is not None
+                and missing_frames >= config.boundary_disappearance_min_missing_frames
+            ):
+                raw = DeadBallObservation(
+                    ("near_boundary_disappearance",), 0.7, source=("visibility_gap", "boundary_context"),
+                    validity=("ball_missing", "boundary_pre_context", "long_gap"),
+                    event_context="boundary_disappearance",
+                    live_counterevidence=("missing_ball",), confirmable=False,
+                )
+        else:
+            missing_frames = 0
+        yield RawPlayStateObservation(
+            frame.frame, frame.half, team, raw, missing_frames, boundary_age,
+        )
 
 
 def iter_infer_possession(
@@ -230,14 +368,18 @@ def iter_infer_possession(
             candidate_team = None
             yield FrameInference(
                 frame.frame, frame.half, "X", team_evidence,
-                DeadBallObservation(raw_deadball.cues, raw_deadball.confidence, False, raw_deadball.hard_evidence),
+                DeadBallObservation(
+                    raw_deadball.cues, raw_deadball.confidence, False, raw_deadball.hard_evidence,
+                    raw_deadball.source, raw_deadball.validity, raw_deadball.event_context,
+                    raw_deadball.live_counterevidence, raw_deadball.confirmable,
+                ),
             )
             continue
 
         if raw_deadball.hard_evidence:
             confirmed_deadball = True
             dead_candidate_count = 0
-        elif raw_deadball.cues:
+        elif raw_deadball.cues and raw_deadball.confirmable:
             dead_candidate_count += 1
             confirmed_deadball = dead_candidate_count >= config.deadball_confirm_frames
         else:
@@ -245,7 +387,9 @@ def iter_infer_possession(
             confirmed_deadball = False
 
         dead_evidence = DeadBallObservation(
-            raw_deadball.cues, raw_deadball.confidence, confirmed_deadball, raw_deadball.hard_evidence
+            raw_deadball.cues, raw_deadball.confidence, confirmed_deadball, raw_deadball.hard_evidence,
+            raw_deadball.source, raw_deadball.validity, raw_deadball.event_context,
+            raw_deadball.live_counterevidence, raw_deadball.confirmable,
         )
         if confirmed_deadball:
             state = "D"

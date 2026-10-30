@@ -5,7 +5,11 @@
   "output": ".local-checkpoints/phase1/e04_isolated_submission.csv",
   "diagnostics": ".local-checkpoints/phase1/e04_isolated_diagnostics.json",
   "metadata": ".local-checkpoints/phase1/e04_isolated_run_metadata.json",
-  "possession": {},
+  "possession": {
+    "boundary_crossing_margin_m": 1.0,
+    "boundary_disappearance_pre_frames": 13,
+    "boundary_disappearance_min_missing_frames": 50
+  },
   "features": {},
   "tag_features": {
     "enabled": true
