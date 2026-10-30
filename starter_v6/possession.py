@@ -59,8 +59,15 @@ class PossessionConfig:
     micro_dead_short_min_frames: int = 38
     micro_dead_long_min_frames: int = 50
     confirmed_dead_score: float = 0.99
+    # One second at 25 FPS, matching the existing default missing-observation
+    # horizon. Zero restores pre-persistence behavior; this is not a fitted duration.
+    deadball_persistence_frames: int = 25
 
     def __post_init__(self) -> None:
+        if (isinstance(self.deadball_persistence_frames, bool)
+                or not isinstance(self.deadball_persistence_frames, int)
+                or self.deadball_persistence_frames < 0):
+            raise ValueError("deadball_persistence_frames must be a non-negative integer")
         positive = (
             "control_radius_m", "min_team_margin_m", "pitch_length_m", "pitch_width_m",
             "restart_ball_speed_max_mps", "stationary_ball_speed_max_mps",
@@ -311,8 +318,8 @@ class RawPlayStateObservation:
 class StatefulDeadBallDetector:
     """Advance the shared stateful dead-ball evidence stream one frame at a time.
 
-    This owns only temporal raw-cue context.  Confirmation remains a separate
-    caller concern so E01 and E02 retain their existing confirmation behavior.
+    Confirmation remains a caller concern. Explicit feedback remembers fresh
+    confirmations; retained/expired evidence can never refresh that memory.
     """
 
     def __init__(self) -> None:
@@ -321,12 +328,22 @@ class StatefulDeadBallDetector:
         self._missing_frames = 0
         self._boundary_age: Optional[int] = None
         self._last_boundary_frame: Optional[int] = None
+        self._stoppage: Optional[Tuple[int, float]] = None
+
+    def remember_confirmation(self, frame: FrameEvidence, raw: DeadBallObservation,
+                              confirmed: bool, config: PossessionConfig) -> None:
+        """Feedback from the caller's existing confirmation, never from memory cues."""
+        if (config.deadball_persistence_frames and frame.half != 0
+                and frame.ball_xy is not None and confirmed and raw.confirmable):
+            self._stoppage = (frame.frame, min(config.confirmed_dead_score,
+                                              max(raw.dead_score, raw.confidence)))
 
     def observe(
         self,
         frame: FrameEvidence,
         team: TeamObservation,
         config: PossessionConfig,
+        live_reliable: bool = True,
     ) -> RawPlayStateObservation:
         if self._previous_frame is not None and frame.frame != self._previous_frame + 1:
             raise ValueError("frames must be contiguous and ordered")
@@ -334,9 +351,16 @@ class StatefulDeadBallDetector:
             self._missing_frames = 0
             self._boundary_age = None
             self._last_boundary_frame = None
+            self._stoppage = None
         self._previous_frame, self._previous_half = frame.frame, frame.half
 
         raw = observe_dead_ball(frame, team, config)
+        # Existing physical boundary/dead cues keep precedence. Only reliable
+        # observed live evidence retires memory; a missing ball never does.
+        if (frame.ball_xy is not None and not raw.cues and live_reliable
+                and (raw.event_context in {"restart_action", "live_motion"}
+                     or (team.team is not None and team.confidence >= config.contradiction_confidence))):
+            self._stoppage = None
         distance = _boundary_distance(frame, config)
         if distance is not None and distance <= config.out_of_bounds_margin_m:
             self._last_boundary_frame = frame.frame
@@ -365,6 +389,23 @@ class StatefulDeadBallDetector:
                 )
         else:
             self._missing_frames = 0
+        if (config.deadball_persistence_frames and self._stoppage is not None
+                and frame.ball_xy is None and frame.half != 0):
+            last_confirmed, strength = self._stoppage
+            age = frame.frame - last_confirmed
+            window = config.deadball_persistence_frames
+            retained = age <= window
+            # Move linearly toward neutral H/A/D mass. Memory cannot refresh
+            # itself or inherit the fresh-confirmation boost in _result().
+            score = (1.0 / 3.0 + (max(1.0 / 3.0, strength) - 1.0 / 3.0)
+                     * (1.0 - age / float(window + 1))) if retained else 1.0 / 3.0
+            raw = DeadBallObservation(
+                ("retained_stoppage",) if retained else (), 0.0,
+                source=("confirmed_stoppage_memory",),
+                validity=("ball_missing", "retained" if retained else "expired"),
+                event_context="stoppage_uncertainty", confirmable=False,
+                dead_score=score, live_score=1.0 - score,
+            )
         return RawPlayStateObservation(
             frame.frame, frame.half, team, raw,
             self._missing_frames, self._boundary_age,
@@ -388,9 +429,17 @@ def iter_raw_play_state(
     non-confirmable so missingness cannot become D without independent evidence.
     """
     detector = StatefulDeadBallDetector()
+    family, count, previous_half = None, 0, None
     for frame in frames:
+        if frame.half != previous_half:
+            family, count = None, 0
+        previous_half = frame.half
         team = observe_team(frame, config)
-        yield detector.observe(frame, team, config)
+        observation = detector.observe(frame, team, config)
+        confirmed, family, count = confirm_dead_ball(
+            observation.dead_ball_evidence, family, count, config)
+        detector.remember_confirmation(frame, observation.dead_ball_evidence, confirmed, config)
+        yield observation
 
 
 def confirm_dead_ball(

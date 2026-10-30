@@ -269,7 +269,11 @@ def iter_infer_e02(
         previous_half = frame.half
 
         team = _team_evidence(features, possession_config, feature_config, tag)
-        raw_dead = dead_ball_detector.observe(frame, team, possession_config).dead_ball_evidence
+        raw_dead = dead_ball_detector.observe(
+            frame, team, possession_config,
+            live_reliable=not (features.quality.implausible_ball_jump
+                               or features.quality.ball_speed_inconsistent),
+        ).dead_ball_evidence
         if frame.half == 0:
             yield from _resolve_gap(
                 pending_gap, None, None, gap_attempted,
@@ -293,6 +297,7 @@ def iter_infer_e02(
             raw_dead, dead_candidate_family, dead_candidate_count, possession_config,
         )
         dead = finalize_dead_ball(raw_dead, confirmed_dead)
+        dead_ball_detector.remember_confirmation(frame, raw_dead, confirmed_dead, possession_config)
 
         if confirmed_dead:
             yield from _resolve_gap(
