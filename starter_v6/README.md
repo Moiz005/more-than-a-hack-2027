@@ -81,6 +81,13 @@ Confirmed structural D uses the configured `confirmed_dead_score`, while raw
 weak/medium D evidence remains magnitude-preserving. HMM transitions remain the
 documented defaults and are not fitted here.
 
+Phase 7 selected the self-contained v2 commit `11b562d` as an engineering
+release candidate based on synthetic correctness, source isolation and
+deterministic validation only. No admissible labeled other-game set was
+available, so this is not an accuracy claim. The frozen E04_C7 tag
+`e04-c7-frozen` remains the explicit fallback; see `PHASE7_DECISION.md` and the
+local-only Phase 7 report for the exact manifests and artifact records.
+
 ## Limitations and status
 
 ### Differences from E01–E03
