@@ -65,6 +65,14 @@ The optional `micro_dead_filter` is `off` by default; `short` and `long` are
 separate 1.5-second/38-frame and 2.0-second/50-frame hypotheses at 25 FPS.
 Hard structural boundary evidence is exempt from those optional filters.
 
+Phase 5 adds explicit live-team ownership evidence. E02 preserves separate H/A
+geometry scores and attaches accepted missing-ball gap recoveries to the
+buffered frames with direction, interval, support count, and bounded confidence.
+Accepted gaps therefore alter H/A emission inputs before Viterbi; they do not
+copy a hard parent label or change HMM transition parameters. Missing gaps that
+fail quality or recovery checks remain uncertain and are not forced to D or to
+the opposing team.
+
 ## Limitations and status
 
 ### Differences from E01–E03

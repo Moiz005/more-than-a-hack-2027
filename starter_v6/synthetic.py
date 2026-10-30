@@ -127,6 +127,12 @@ def _live_players(team: str = "H", *, x_m: float = 10.0, speed_mps: float = 1.0)
     return tuple(players)
 
 
+def _gap_players(home_x: float, away_x: float) -> Tuple[PlayerEvidence, ...]:
+    players = [player("H", home_x + 0.4 * index, 10.0, 1.0, index + 1) for index in range(5)]
+    players.extend(player("A", away_x + 0.4 * index, 10.0, 1.0, index + 6) for index in range(5))
+    return tuple(players)
+
+
 def fixture_catalog() -> Tuple[SyntheticFixture, ...]:
     """Return the complete invented Phase 2 fixture catalog."""
     return (
@@ -193,6 +199,25 @@ def fixture_catalog() -> Tuple[SyntheticFixture, ...]:
             expected={"missing_ball_not_dead": True, "gap_trace_present": True},
             expectation_kind="acceptance",
             failure_signals=("gap_evidence_not_encoded_in_hmm_emission",),
+        ),
+        SyntheticFixture(
+            "accepted_gap_turnover",
+            "A-quality missing-ball interval with independent A approach and post-gap recovery.",
+            (
+                frame(0, (0.0, 10.0), _live_players("H", x_m=0.5), ball_speed_mps=1.0),
+                frame(1, (0.0, 10.0), _live_players("H", x_m=0.5), ball_speed_mps=1.0),
+                frame(2, (0.0, 10.0), _live_players("H", x_m=0.5), ball_speed_mps=1.0),
+                frame(3, None, _gap_players(0.8, 2.5)),
+                frame(4, None, _gap_players(1.1, 2.0)),
+                frame(5, None, _gap_players(1.4, 1.5)),
+                frame(6, None, _gap_players(1.7, 1.2)),
+                frame(7, (0.0, 10.0), _live_players("A", x_m=0.5), ball_speed_mps=1.0),
+                frame(8, (0.0, 10.0), _live_players("A", x_m=0.5), ball_speed_mps=1.0),
+                frame(9, (0.0, 10.0), _live_players("A", x_m=0.5), ball_speed_mps=1.0),
+            ),
+            rule_ids=("R08", "R10", "R12"),
+            expected={"accepted_gap_direction": "H_to_A", "gap_evidence_reaches_emission": True},
+            expectation_kind="acceptance",
         ),
         SyntheticFixture(
             "boundary_and_jitter",
@@ -311,9 +336,21 @@ def _row(result: E02FrameInference, raw_team, raw_dead, tag: TagEvidence) -> Dic
         "team": {
             "raw_team": raw_team.team,
             "raw_confidence": raw_team.confidence,
+            "home_score": raw_team.home_score,
+            "away_score": raw_team.away_score,
+            "source": list(raw_team.source),
             "inference_team": result.inference.team_evidence.team,
             "inference_label": result.inference.label,
             "tag_relation": result.tag_relation,
+        },
+        "ownership": None if result.ownership_evidence is None else {
+            "direction": result.ownership_evidence.direction,
+            "start_frame": result.ownership_evidence.start_frame,
+            "end_frame": result.ownership_evidence.end_frame,
+            "support_frames": result.ownership_evidence.support_frames,
+            "confidence": result.ownership_evidence.confidence,
+            "accepted": result.ownership_evidence.accepted,
+            "reason": result.ownership_evidence.reason,
         },
         "raw_dead": {
             "cues": list(raw_dead.cues),

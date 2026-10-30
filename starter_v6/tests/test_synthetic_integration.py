@@ -62,7 +62,7 @@ class SyntheticIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 set(row),
                 {"frame", "half", "tag", "quality", "gap", "team", "raw_dead",
-                 "confirmed_dead", "emission", "decoded_label"},
+                 "ownership", "confirmed_dead", "emission", "decoded_label"},
             )
         self.assertIn("possession_spells", first)
 
@@ -89,6 +89,12 @@ class SyntheticIntegrationTests(unittest.TestCase):
         overlong_trace = trace_fixture(overlong).as_dict()
         self.assertTrue(all(row["tag"]["active"] for row in overlong_trace["rows"][:5]))
         self.assertTrue(any(row["team"]["inference_team"] == "H" for row in overlong_trace["rows"][2:]))
+
+        accepted = next(item for item in fixture_catalog() if item.name == "accepted_gap_turnover")
+        accepted_trace = trace_fixture(accepted).as_dict()
+        ownership = [row["ownership"] for row in accepted_trace["rows"] if row["ownership"]]
+        self.assertTrue(ownership)
+        self.assertEqual(ownership[0]["direction"], "H_to_A")
 
     def test_dead_cue_strengths_and_conflicting_tag_are_traceable(self):
         strengths = {}

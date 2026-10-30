@@ -98,6 +98,9 @@ class TeamObservation:
     nearest_home_m: Optional[float]
     nearest_away_m: Optional[float]
     margin_m: Optional[float]
+    home_score: float = 0.0
+    away_score: float = 0.0
+    source: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -160,7 +163,7 @@ def observe_team(frame: FrameEvidence, config: PossessionConfig) -> TeamObservat
             nearest[player.team] = distance
     home, away = nearest["H"], nearest["A"]
     if home is None and away is None:
-        return TeamObservation(True, None, 0.0, None, None, None)
+        return TeamObservation(True, None, 0.0, None, None, None, 0.0, 0.0, ("proximity",))
     if away is None:
         best_team, best_distance, margin, separated = "H", home, None, True
     elif home is None:
@@ -182,7 +185,10 @@ def observe_team(frame: FrameEvidence, config: PossessionConfig) -> TeamObservat
         )
         confidence = 0.5 * (proximity + separation)
         team = best_team if separated and confidence >= config.min_observation_confidence else None
-    return TeamObservation(True, team, confidence, home, away, margin)
+    home_score = max(0.0, min(1.0, 1.0 - home / config.control_radius_m)) if home is not None else 0.0
+    away_score = max(0.0, min(1.0, 1.0 - away / config.control_radius_m)) if away is not None else 0.0
+    return TeamObservation(True, team, confidence, home, away, margin,
+                          home_score, away_score, ("proximity",))
 
 
 def observe_dead_ball(

@@ -28,6 +28,20 @@ class E02FrameInference:
     tag_relation: str = "none"
     gap_decision: str = "none"
     gap_decision_reason: str = "none"
+    ownership_evidence: Optional["GapOwnershipEvidence"] = None
+
+
+@dataclass(frozen=True)
+class GapOwnershipEvidence:
+    prior_team: Optional[str]
+    recovered_team: Optional[str]
+    direction: str
+    start_frame: int
+    end_frame: int
+    support_frames: int
+    confidence: float
+    accepted: bool
+    reason: str
 
 
 def _team_evidence(features: FrameFeatures, config: PossessionConfig, quality: E02Config,
@@ -102,6 +116,9 @@ def _team_evidence(features: FrameFeatures, config: PossessionConfig, quality: E
         distances["H"],
         distances["A"],
         margin,
+        max(0.0, min(1.0, scores["H"] * features.quality.confidence_weight)),
+        max(0.0, min(1.0, scores["A"] * features.quality.confidence_weight)),
+        ("geometry", "motion", "quality"),
     )
 
 
@@ -111,9 +128,13 @@ def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: De
     if dead.hard_evidence:
         dead_score = 1.0
     if team.team == "H":
-        home, away = max(team.confidence, 1e-12), max(1.0 - team.confidence, 1e-12)
+        home, away = team.home_score, team.away_score
+        if home + away == 0.0:
+            home, away = team.confidence, max(1.0 - team.confidence, 1e-12)
     elif team.team == "A":
-        home, away = max(1.0 - team.confidence, 1e-12), max(team.confidence, 1e-12)
+        home, away = team.home_score, team.away_score
+        if home + away == 0.0:
+            home, away = max(1.0 - team.confidence, 1e-12), team.confidence
     else:
         home = away = max(dead.live_score, 0.0) / 2.0
     informative = bool(dead.cues or dead.live_score or team.team is not None)
@@ -158,6 +179,29 @@ def _resolve_gap(
             gap_decision_reason=decision_reason if index == 0 else "none",
         ))
     return resolved
+
+
+def _attach_gap_evidence(
+    items: List[E02FrameInference], evidence: GapOwnershipEvidence,
+) -> List[E02FrameInference]:
+    """Make accepted gap evidence visible to the decoder, not only labels."""
+    attached = []
+    for item in items:
+        emission = item.emission
+        if evidence.accepted and evidence.recovered_team in {"H", "A"}:
+            confidence = evidence.confidence
+            home = emission.home * (1.0 - confidence)
+            away = emission.away * (1.0 - confidence)
+            if evidence.recovered_team == "H":
+                home += confidence
+            else:
+                away += confidence
+            emission = frame_emission(
+                emission.frame, emission.half,
+                home=home, away=away, dead=emission.dead, informative=True,
+            )
+        attached.append(replace(item, emission=emission, ownership_evidence=evidence))
+    return attached
 
 
 def _gap_rejection_reason(
@@ -375,17 +419,33 @@ def iter_infer_e02(
                     if accepted_team is not None
                     else _gap_rejection_reason(pending_gap, gap_support_count, feature_config, gap_attempted)
                 )
-                yield from _resolve_gap(
+                gap_evidence = GapOwnershipEvidence(
+                    gap_prior_state, opposing_team,
+                    "{}_to_{}".format(gap_prior_state, opposing_team)
+                    if accepted_team is not None else "unaccepted",
+                    pending_gap[0].features.frame.frame,
+                    pending_gap[-1].features.frame.frame,
+                    gap_support_count,
+                    min(0.8, gap_support_count / float(max(1, feature_config.gap_support_frames)) * 0.8)
+                    if accepted_team is not None else 0.0,
+                    accepted_team is not None,
+                    reason,
+                )
+                resolved_gap = _resolve_gap(
                     pending_gap, accepted_team, gap_support_start, gap_attempted, reason
                 )
                 if accepted_team is not None:
-                    yield from (
+                    resolved_gap = _attach_gap_evidence(resolved_gap, gap_evidence)
+                yield from resolved_gap
+                if accepted_team is not None:
+                    recovered = [
                         replace(item, inference=replace(item.inference, label=accepted_team))
                         for item in pending_recovery
-                    )
+                    ]
+                    yield from _attach_gap_evidence(recovered, gap_evidence)
                 else:
                     yield from pending_recovery
-                yield result
+                yield replace(result, ownership_evidence=gap_evidence if accepted_team is not None else None)
                 pending_gap.clear()
                 pending_recovery.clear()
                 gap_prior_state = gap_support_team = None
