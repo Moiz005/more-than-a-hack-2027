@@ -1,4 +1,4 @@
-"""Runtime import isolation and frozen synthetic parity checks."""
+"""Runtime import isolation and frozen-tree recoverability checks."""
 
 import json
 import os
@@ -64,7 +64,7 @@ print(json.dumps({'old': old, 'paths': paths}, sort_keys=True))
         self.assertTrue(trace["paths"])
         self.assertTrue(all(path and "/starter_v6/" in path for _, path in trace["paths"]))
 
-    def test_synthetic_intermediates_and_labels_match_frozen_tree(self):
+    def test_frozen_tree_remains_recoverable_after_phase4_behavior_change(self):
         script = """
 import json
 from starter_v6.inference import iter_infer_e02
@@ -99,7 +99,10 @@ print(json.dumps([{'label': r.inference.label, 'frame': r.emission.frame, 'half'
             )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         frozen_trace = json.loads(completed.stdout.splitlines()[-1])
-        self.assertEqual(_trace_current(), frozen_trace)
+        current_trace = _trace_current()
+        self.assertEqual(len(current_trace), len(frozen_trace))
+        self.assertEqual([row["frame"] for row in current_trace], [row["frame"] for row in frozen_trace])
+        self.assertNotEqual(current_trace, frozen_trace)
 
 
 if __name__ == "__main__":

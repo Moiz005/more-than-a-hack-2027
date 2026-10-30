@@ -32,13 +32,17 @@ class FrameEmission:
 
 def frame_emission(frame: int, half: int, *, home: float = 0.0, away: float = 0.0,
                    dead: float = 0.0, informative: bool = False) -> FrameEmission:
-    """Normalize non-negative evidence; total absence yields neutral uninformative scores."""
+    """Normalize evidence while retaining a neutral live remainder for D-only input."""
     values = (float(home), float(away), float(dead))
     if any(not math.isfinite(value) or value < 0.0 for value in values):
         raise ValueError("emission evidence must be finite and non-negative")
     total = sum(values)
     if total == 0.0:
         return FrameEmission(frame, half, 1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0, False)
+    if home == 0.0 and away == 0.0 and 0.0 < dead <= 1.0:
+        home = away = (1.0 - dead) / 2.0
+        values = (home, away, float(dead))
+        total = sum(values)
     return FrameEmission(frame, half, *(value / total for value in values), informative)
 
 

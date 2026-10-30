@@ -58,6 +58,13 @@ The configurable candidate thresholds are expressed in metres and frames in
 `config.example.json`; they are engineering hypotheses, not values tuned to the
 public five-minute labels.
 
+Phase 4 adds cue-specific confirmation and soft play-state scoring. A restart
+cue cannot borrow persistence from a collective-motion cue, and weak/medium D
+evidence retains a neutral live remainder instead of collapsing to one-hot D.
+The optional `micro_dead_filter` is `off` by default; `short` and `long` are
+separate 1.5-second/38-frame and 2.0-second/50-frame hypotheses at 25 FPS.
+Hard structural boundary evidence is exempt from those optional filters.
+
 ## Limitations and status
 
 ### Differences from E01–E03

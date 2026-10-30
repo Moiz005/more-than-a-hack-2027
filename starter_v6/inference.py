@@ -12,6 +12,8 @@ from starter_v6.possession import (
     FrameInference,
     PossessionConfig,
     TeamObservation,
+    confirm_dead_ball,
+    finalize_dead_ball,
     observe_dead_ball,
 )
 from starter_v6.tag_features import TagEvidence
@@ -105,20 +107,20 @@ def _team_evidence(features: FrameFeatures, config: PossessionConfig, quality: E
 
 def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: DeadBallObservation,
             tag: Optional[TagEvidence] = None) -> E02FrameInference:
-    if dead.confirmed:
-        emission = frame_emission(features.frame.frame, features.frame.half,
-                                  dead= max(dead.confidence, 1.0 if dead.hard_evidence else 0.0),
-                                  informative=True)
-    elif team.team == "H":
-        emission = frame_emission(features.frame.frame, features.frame.half,
-                                  home=max(team.confidence, 1e-12), away=max(1.0-team.confidence, 1e-12),
-                                  informative=True)
+    dead_score = max(dead.dead_score, dead.confidence if dead.cues else 0.0)
+    if dead.hard_evidence:
+        dead_score = 1.0
+    if team.team == "H":
+        home, away = max(team.confidence, 1e-12), max(1.0 - team.confidence, 1e-12)
     elif team.team == "A":
-        emission = frame_emission(features.frame.frame, features.frame.half,
-                                  home=max(1.0-team.confidence, 1e-12), away=max(team.confidence, 1e-12),
-                                  informative=True)
+        home, away = max(1.0 - team.confidence, 1e-12), max(team.confidence, 1e-12)
     else:
-        emission = frame_emission(features.frame.frame, features.frame.half)
+        home = away = max(dead.live_score, 0.0) / 2.0
+    informative = bool(dead.cues or dead.live_score or team.team is not None)
+    emission = frame_emission(
+        features.frame.frame, features.frame.half,
+        home=home, away=away, dead=dead_score, informative=informative,
+    )
     relation = "none"
     if tag is not None and tag.active:
         if tag.team_conflict:
@@ -183,6 +185,7 @@ def iter_infer_e02(
     missing_count = uncertain_count = 0
     candidate_team: Optional[str] = None
     candidate_count = dead_candidate_count = 0
+    dead_candidate_family: Optional[str] = None
     pending_gap: List[E02FrameInference] = []
     pending_recovery: List[E02FrameInference] = []
     gap_prior_state: Optional[str] = None
@@ -210,6 +213,7 @@ def iter_infer_e02(
             state = "X"
             missing_count = uncertain_count = candidate_count = dead_candidate_count = 0
             candidate_team = None
+            dead_candidate_family = None
             gap_prior_state = gap_support_team = None
             gap_support_count = 0
             gap_support_start = None
@@ -228,32 +232,19 @@ def iter_infer_e02(
             pending_recovery.clear()
             state = "X"
             missing_count = uncertain_count = candidate_count = dead_candidate_count = 0
+            dead_candidate_family = None
             candidate_team = None
             gap_prior_state = gap_support_team = None
             gap_support_count = 0
             gap_support_start = None
             gap_attempted = False
-            yield _result(features, "X", team, DeadBallObservation(
-                raw_dead.cues, raw_dead.confidence, False, raw_dead.hard_evidence,
-                raw_dead.source, raw_dead.validity, raw_dead.event_context,
-                raw_dead.live_counterevidence, raw_dead.confirmable,
-            ), tag)
+            yield _result(features, "X", team, finalize_dead_ball(raw_dead, False), tag)
             continue
 
-        if raw_dead.hard_evidence:
-            confirmed_dead = True
-            dead_candidate_count = 0
-        elif raw_dead.cues and raw_dead.confirmable:
-            dead_candidate_count += 1
-            confirmed_dead = dead_candidate_count >= possession_config.deadball_confirm_frames
-        else:
-            dead_candidate_count = 0
-            confirmed_dead = False
-        dead = DeadBallObservation(
-            raw_dead.cues, raw_dead.confidence, confirmed_dead, raw_dead.hard_evidence,
-            raw_dead.source, raw_dead.validity, raw_dead.event_context,
-            raw_dead.live_counterevidence, raw_dead.confirmable,
+        confirmed_dead, dead_candidate_family, dead_candidate_count = confirm_dead_ball(
+            raw_dead, dead_candidate_family, dead_candidate_count, possession_config,
         )
+        dead = finalize_dead_ball(raw_dead, confirmed_dead)
 
         if confirmed_dead:
             yield from _resolve_gap(

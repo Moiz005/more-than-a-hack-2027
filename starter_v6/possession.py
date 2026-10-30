@@ -7,7 +7,7 @@ inferences (H/A/D/X). It is deterministic and intentionally exposes its threshol
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable, Iterator, List, Optional, Sequence, Tuple
 
 
@@ -55,6 +55,9 @@ class PossessionConfig:
     boundary_crossing_margin_m: float = 1.0
     boundary_disappearance_pre_frames: int = 13
     boundary_disappearance_min_missing_frames: int = 50
+    micro_dead_filter: str = "off"
+    micro_dead_short_min_frames: int = 38
+    micro_dead_long_min_frames: int = 50
 
     def __post_init__(self) -> None:
         positive = (
@@ -78,10 +81,13 @@ class PossessionConfig:
             "acquire_frames", "max_missing_frames", "max_uncertain_frames",
             "min_players_for_motion", "deadball_confirm_frames",
             "boundary_disappearance_pre_frames", "boundary_disappearance_min_missing_frames",
+            "micro_dead_short_min_frames", "micro_dead_long_min_frames",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError("{} must be a positive integer".format(name))
+        if self.micro_dead_filter not in {"off", "short", "long"}:
+            raise ValueError("micro_dead_filter must be off, short, or long")
 
 
 @dataclass(frozen=True)
@@ -105,6 +111,9 @@ class DeadBallObservation:
     event_context: Optional[str] = None
     live_counterevidence: Tuple[str, ...] = ()
     confirmable: bool = True
+    dead_score: float = 0.0
+    live_score: float = 0.0
+    confirmation_family: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -191,6 +200,7 @@ def observe_dead_ball(
         return DeadBallObservation(
             (), 0.0, source=("ball_visibility",), validity=("ball_missing",),
             event_context="live_observation",
+            live_score=0.15,
         )
     bx, by = frame.ball_xy
     margin = config.out_of_bounds_margin_m
@@ -211,6 +221,9 @@ def observe_dead_ball(
             event_context="boundary_crossing",
             live_counterevidence=("nearby_team_control",) if team_observation.team else (),
             confirmable=hard,
+            dead_score=1.0 if hard else 0.65,
+            live_score=team_observation.confidence if team_observation.team else 0.0,
+            confirmation_family="out_of_bounds",
         )
 
     # A restart action is the transition back to play, not a dead-ball cue.
@@ -219,12 +232,14 @@ def observe_dead_ball(
             (), 0.0, source=("restart_action",), validity=("live_restart",),
             event_context="restart_action",
             live_counterevidence=("restart_action",),
+            live_score=0.9,
         )
     if frame.ball_speed_mps is None:
         return DeadBallObservation(
             (), 0.0, source=("ball_motion",), validity=("ball_speed_missing",),
             event_context="live_observation",
             live_counterevidence=("team_control",) if team_observation.team else (),
+            live_score=max(0.15, team_observation.confidence),
         )
 
     live_counterevidence = []
@@ -237,18 +252,23 @@ def observe_dead_ball(
             validity=("coordinate_valid", "stationary_ball"),
             event_context="restart_context",
             live_counterevidence=tuple(live_counterevidence),
+            dead_score=0.75,
+            live_score=team_observation.confidence if team_observation.team else 0.0,
+            confirmation_family="restart_stationary",
         )
 
     if frame.ball_speed_mps > config.stationary_ball_speed_max_mps:
         return DeadBallObservation(
             (), 0.0, source=("ball_motion",), validity=("ball_moving",),
             event_context="live_motion", live_counterevidence=tuple(live_counterevidence),
+            live_score=max(0.7, team_observation.confidence),
         )
     speeds = [player.speed_mps for player in frame.players if player.speed_mps is not None]
     if len(speeds) < config.min_players_for_motion:
         return DeadBallObservation(
             (), 0.0, source=("collective_motion",), validity=("insufficient_motion_tracks",),
             event_context="live_observation", live_counterevidence=tuple(live_counterevidence),
+            live_score=max(0.15, team_observation.confidence),
         )
     stationary_fraction = sum(
         speed <= config.stationary_player_speed_max_mps for speed in speeds
@@ -258,10 +278,14 @@ def observe_dead_ball(
             ("stationary_context",), 0.55, source=("collective_motion",),
             validity=("coordinate_valid", "stationary_players"),
             event_context="motion_context", live_counterevidence=tuple(live_counterevidence),
+            dead_score=0.55,
+            live_score=team_observation.confidence if team_observation.team else 0.0,
+            confirmation_family="stationary_context",
         )
     return DeadBallObservation(
         (), 0.0, source=("collective_motion",), validity=("players_moving",),
         event_context="live_motion", live_counterevidence=tuple(live_counterevidence),
+        live_score=max(0.35, team_observation.confidence),
     )
 
 
@@ -330,12 +354,43 @@ def iter_raw_play_state(
                     validity=("ball_missing", "boundary_pre_context", "long_gap"),
                     event_context="boundary_disappearance",
                     live_counterevidence=("missing_ball",), confirmable=False,
+                    dead_score=0.7, live_score=0.15,
+                    confirmation_family="near_boundary_disappearance",
                 )
         else:
             missing_frames = 0
         yield RawPlayStateObservation(
             frame.frame, frame.half, team, raw, missing_frames, boundary_age,
         )
+
+
+def confirm_dead_ball(
+    raw: DeadBallObservation,
+    previous_family: Optional[str],
+    previous_count: int,
+    config: PossessionConfig,
+) -> Tuple[bool, Optional[str], int]:
+    """Advance one cue-specific confirmation stream.
+
+    A family switch starts a new hypothesis; unrelated weak cues never share a
+    persistence counter. Hard physical evidence confirms immediately.
+    """
+    if raw.hard_evidence:
+        return True, None, 0
+    if not raw.cues or not raw.confirmable:
+        return False, None, 0
+    family = raw.confirmation_family or raw.cues[0]
+    count = previous_count + 1 if family == previous_family else 1
+    return count >= config.deadball_confirm_frames, family, count
+
+
+def finalize_dead_ball(raw: DeadBallObservation, confirmed: bool) -> DeadBallObservation:
+    """Copy raw evidence into the inferred observation without losing provenance."""
+    return DeadBallObservation(
+        raw.cues, raw.confidence, confirmed, raw.hard_evidence,
+        raw.source, raw.validity, raw.event_context, raw.live_counterevidence,
+        raw.confirmable, raw.dead_score, raw.live_score, raw.confirmation_family,
+    )
 
 
 def iter_infer_possession(
@@ -349,6 +404,7 @@ def iter_infer_possession(
     missing_count = uncertain_count = 0
     candidate_team: Optional[str] = None
     candidate_count = dead_candidate_count = 0
+    dead_candidate_family: Optional[str] = None
 
     for frame in frames:
         if previous_frame is not None and frame.frame != previous_frame + 1:
@@ -357,6 +413,7 @@ def iter_infer_possession(
         if previous_half is not None and frame.half != previous_half:
             state = "X"
             missing_count = uncertain_count = candidate_count = dead_candidate_count = 0
+            dead_candidate_family = None
             candidate_team = None
         previous_half = frame.half
 
@@ -365,32 +422,18 @@ def iter_infer_possession(
         if frame.half == 0:
             state = "X"
             missing_count = uncertain_count = candidate_count = dead_candidate_count = 0
+            dead_candidate_family = None
             candidate_team = None
             yield FrameInference(
                 frame.frame, frame.half, "X", team_evidence,
-                DeadBallObservation(
-                    raw_deadball.cues, raw_deadball.confidence, False, raw_deadball.hard_evidence,
-                    raw_deadball.source, raw_deadball.validity, raw_deadball.event_context,
-                    raw_deadball.live_counterevidence, raw_deadball.confirmable,
-                ),
+                finalize_dead_ball(raw_deadball, False),
             )
             continue
 
-        if raw_deadball.hard_evidence:
-            confirmed_deadball = True
-            dead_candidate_count = 0
-        elif raw_deadball.cues and raw_deadball.confirmable:
-            dead_candidate_count += 1
-            confirmed_deadball = dead_candidate_count >= config.deadball_confirm_frames
-        else:
-            dead_candidate_count = 0
-            confirmed_deadball = False
-
-        dead_evidence = DeadBallObservation(
-            raw_deadball.cues, raw_deadball.confidence, confirmed_deadball, raw_deadball.hard_evidence,
-            raw_deadball.source, raw_deadball.validity, raw_deadball.event_context,
-            raw_deadball.live_counterevidence, raw_deadball.confirmable,
+        confirmed_deadball, dead_candidate_family, dead_candidate_count = confirm_dead_ball(
+            raw_deadball, dead_candidate_family, dead_candidate_count, config,
         )
+        dead_evidence = finalize_dead_ball(raw_deadball, confirmed_deadball)
         if confirmed_deadball:
             state = "D"
             missing_count = uncertain_count = candidate_count = 0
@@ -442,7 +485,46 @@ def infer_possession(
     config: PossessionConfig = PossessionConfig(),
 ) -> List[FrameInference]:
     """Convenience materialization for synthetic tests; production CLI uses the iterator."""
-    return list(iter_infer_possession(frames, config))
+    return apply_micro_dead_filter(list(iter_infer_possession(frames, config)), config)
+
+
+def apply_micro_dead_filter(
+    results: Sequence[FrameInference], config: PossessionConfig,
+) -> List[FrameInference]:
+    """Apply an optional synthetic R15 duration hypothesis to confirmed D runs.
+
+    The default is ``off``.  ``short`` and ``long`` use 1.5 s (38 frames) and
+    2.0 s (50 frames) at 25 FPS respectively. Hard structural evidence is
+    preserved regardless of the selected hypothesis.
+    """
+    if config.micro_dead_filter == "off":
+        return list(results)
+    minimum = (config.micro_dead_short_min_frames if config.micro_dead_filter == "short"
+               else config.micro_dead_long_min_frames)
+    filtered = list(results)
+    index = 0
+    while index < len(filtered):
+        if filtered[index].label != "D":
+            index += 1
+            continue
+        start = index
+        half = filtered[index].half
+        hard = False
+        while index < len(filtered) and filtered[index].label == "D" and filtered[index].half == half:
+            hard = hard or filtered[index].dead_ball_evidence.hard_evidence
+            index += 1
+        if hard or index - start >= minimum:
+            continue
+        previous = filtered[start - 1].label if start > 0 and filtered[start - 1].half == half else "X"
+        following = filtered[index].label if index < len(filtered) and filtered[index].half == half else "X"
+        replacement = previous if previous in {"H", "A"} else following
+        for position in range(start, index):
+            item = filtered[position]
+            filtered[position] = replace(
+                item, label=replacement,
+                dead_ball_evidence=replace(item.dead_ball_evidence, confirmed=False),
+            )
+    return filtered
 
 
 def possession_spells(labels: Sequence[str]) -> List[Tuple[str, int, int]]:

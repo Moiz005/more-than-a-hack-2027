@@ -8,7 +8,10 @@
   "possession": {
     "boundary_crossing_margin_m": 1.0,
     "boundary_disappearance_pre_frames": 13,
-    "boundary_disappearance_min_missing_frames": 50
+    "boundary_disappearance_min_missing_frames": 50,
+    "micro_dead_filter": "off",
+    "micro_dead_short_min_frames": 38,
+    "micro_dead_long_min_frames": 50
   },
   "features": {},
   "tag_features": {
