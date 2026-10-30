@@ -35,4 +35,17 @@ Metadata contains source/config/input SHA256 fingerprints, Git revision and dirt
 
 ## Limitations and status
 
-The E04 synthetic tests verify decoder arithmetic, interval semantics, and edge handling. Full-match reproducibility verifies a deterministic, structurally valid candidate. Neither establishes possession accuracy or improvement over E01–E03 or the organizer baseline. Smart Tagging remains weak input evidence through the E03 parent. Transition probabilities are assumptions and no independent full-match possession labels are available for accuracy assessment.
+### Differences from E01–E03
+
+E01 uses missing-aware rules and separate dead-ball evidence; E02 adds geometry, motion, and observation-quality evidence; E03 adds Smart Tagging as weak contextual evidence. E04 retains E03's emissions and replaces its final framewise state decisions with configurable three-state H/A/D log-space Viterbi decoding, independently per graded half. It does not replace or mutate E01–E03. The local same-session ablation observed 114,940 E01 labels and 116,404 E02/E03 labels differ from E04; E02 and E03 were identical. These are prediction changes only, not measured gains or losses against truth.
+
+### Known behavior and uncertainty
+
+- Synthetic E04 retains a three-frame controlled A interval between H spells and an explicitly evidenced `H → D → H` stoppage, even when neutral missing-ball observations occur around the stoppage. Neutral missing-ball evidence alone remains live and does not create D.
+- **Known short-transition failure mode:** under the committed default transition prior, one- and two-frame opposing evidence blips are smoothed into the surrounding H spell, even when their synthetic emission is strong. The tested three-frame controlled interval is retained. Whether any such brief interval constitutes controlled possession in match data is unknown; the defaults are not calibrated from independent labels.
+- The first-order transition prior can dominate long uninformative-emission runs and can shift or merge boundaries. This is an unresolved model risk, not something the full-run spell counts can settle. Any altered prior requires synthetic regression and a reproducible new configuration; public five-minute labels must not be used to tune it.
+- Smart Tagging remains weak evidence through E03. Neither tag inputs, E04 transitions, nor synthetic expected states have been validated against independent full-match possession labels.
+
+The E04 synthetic tests verify decoder arithmetic, interval semantics, and edge handling. Full-match reproducibility verifies a deterministic, structurally valid candidate. Neither establishes possession accuracy or improvement over E01–E03 or the organizer baseline. Transition probabilities are assumptions and no independent full-match possession labels are available for accuracy assessment.
+
+The local experiment record is under `.local-checkpoints/phase8/` and is ignored by Git. It includes two matching post-commit candidates, full-run diagnostics, provenance metadata, and the aggregate-only E01–E04 ablation summary. These restricted local artifacts must not be committed or published.

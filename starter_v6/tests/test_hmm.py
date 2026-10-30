@@ -4,6 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from starter_v6.hmm import HMMConfig, decode
+from starter_v6.intervals import intervals
 
 
 class DecoderTest(unittest.TestCase):
@@ -80,3 +81,37 @@ class DecoderTest(unittest.TestCase):
         turnover_values = [(0.98, 0.01, 0.01), (0.01, 0.98, 0.01), (0.01, 0.98, 0.01)]
         turnover, _ = decode([SimpleNamespace(home=h, away=a, dead=d) for h, a, d in turnover_values], config=cfg)
         self.assertEqual(turnover, ["H", "A", "A"])
+
+    def test_three_frame_controlled_turnover_forms_a_short_separate_spell(self):
+        cfg = HMMConfig()
+        values = ([(0.98, 0.01, 0.01)] * 4
+                  + [(0.01, 0.98, 0.01)] * 3
+                  + [(0.98, 0.01, 0.01)] * 4)
+        decoded, _ = decode([SimpleNamespace(home=h, away=a, dead=d) for h, a, d in values], config=cfg)
+        self.assertEqual(decoded, ["H"] * 4 + ["A"] * 3 + ["H"] * 4)
+        self.assertEqual(intervals(decoded, [1] * len(decoded)), [
+            ("H", 1, 0, 4), ("A", 1, 4, 7), ("H", 1, 7, 11),
+        ])
+
+    def test_default_prior_suppresses_one_or_two_frame_opponent_blips(self):
+        cfg = HMMConfig()
+        for duration in (1, 2):
+            with self.subTest(duration=duration):
+                values = ([(0.98, 0.01, 0.01)] * 4
+                          + [(0.01, 0.98, 0.01)] * duration
+                          + [(0.98, 0.01, 0.01)] * 4)
+                decoded, _ = decode([SimpleNamespace(home=h, away=a, dead=d) for h, a, d in values], config=cfg)
+                self.assertEqual(decoded, ["H"] * len(values))
+
+    def test_missing_ball_stays_live_but_evidenced_stoppage_splits_spells(self):
+        cfg = HMMConfig()
+        values = ([(0.98, 0.01, 0.01)] * 4
+                  + [(1 / 3, 1 / 3, 1 / 3)]  # ball missing, no dead-ball evidence
+                  + [(0.00005, 0.00005, 0.9999)]  # independent stoppage evidence
+                  + [(1 / 3, 1 / 3, 1 / 3)]  # missing observation during the restart gap
+                  + [(0.98, 0.01, 0.01)] * 4)
+        decoded, _ = decode([SimpleNamespace(home=h, away=a, dead=d) for h, a, d in values], config=cfg)
+        self.assertEqual(decoded, ["H"] * 5 + ["D"] + ["H"] * 5)
+        self.assertEqual(intervals(decoded, [1] * len(decoded)), [
+            ("H", 1, 0, 5), ("D", 1, 5, 6), ("H", 1, 6, 11),
+        ])
