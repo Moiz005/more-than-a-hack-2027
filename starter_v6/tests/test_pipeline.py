@@ -2,14 +2,14 @@
 
 import unittest
 
-from starter_v5.ingestion import ATDFrame, ATDMetadata, Observation, SmartTagEvent, TrackSlot
-from starter_v5.pipeline import (
+from starter_v6.ingestion import ATDFrame, ATDMetadata, Observation, SmartTagEvent, TrackSlot
+from starter_v6.pipeline import (
     frame_evidence_from_atd,
     iter_frame_evidence,
     restart_frame_mask,
     summarize_inferences,
 )
-from starter_v5.possession import FrameEvidence, PlayerEvidence, infer_possession
+from starter_v6.possession import FrameEvidence, PlayerEvidence, infer_possession
 
 
 def observation(x=0.5, y=0.5, speed=1.0, valid=True, speed_valid=True):

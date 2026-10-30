@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Iterable, Iterator, List, Optional, Tuple
 
-from starter_v4.features import E02Config, FrameFeatures, iter_frame_features
-from starter_v4.possession import (
+from starter_v6.features import E02Config, FrameFeatures, iter_frame_features
+from starter_v6.possession import (
     DeadBallObservation,
     FrameEvidence,
     FrameInference,
@@ -14,8 +14,8 @@ from starter_v4.possession import (
     TeamObservation,
     observe_dead_ball,
 )
-from starter_v5.tag_features import TagEvidence
-from starter_v5.emissions import FrameEmission, frame_emission
+from starter_v6.tag_features import TagEvidence
+from starter_v6.emissions import FrameEmission, frame_emission
 
 
 @dataclass(frozen=True)

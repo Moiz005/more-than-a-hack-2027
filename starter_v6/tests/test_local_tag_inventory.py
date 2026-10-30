@@ -4,7 +4,7 @@ import unittest
 from collections import Counter
 from pathlib import Path
 
-from starter_v5.ingestion import parse_smart_tagging
+from starter_v6.ingestion import parse_smart_tagging
 
 
 TAG_PATH = Path(__file__).resolve().parents[2] / "data" / "tactical" / "BAR-ATH_tactical_smart_tagging.xml"

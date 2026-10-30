@@ -2,7 +2,7 @@
 
 import unittest
 
-from starter_v5.possession import (
+from starter_v6.possession import (
     FrameEvidence,
     PlayerEvidence,
     PossessionConfig,

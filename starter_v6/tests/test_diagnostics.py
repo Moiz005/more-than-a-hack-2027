@@ -2,11 +2,11 @@
 
 import unittest
 
-from starter_v5.features import E02Config
-from starter_v5.inference import iter_infer_e02
-from starter_v5.pipeline import E02SummaryAccumulator, TagAblationAccumulator
-from starter_v5.possession import FrameEvidence, PlayerEvidence, PossessionConfig
-from starter_v5.tag_features import TagEvidence
+from starter_v6.features import E02Config
+from starter_v6.inference import iter_infer_e02
+from starter_v6.pipeline import E02SummaryAccumulator, TagAblationAccumulator
+from starter_v6.possession import FrameEvidence, PlayerEvidence, PossessionConfig
+from starter_v6.tag_features import TagEvidence
 
 
 class E02DiagnosticsTests(unittest.TestCase):

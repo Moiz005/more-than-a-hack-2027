@@ -7,8 +7,8 @@ from collections import Counter
 from statistics import median
 from typing import Dict, Iterable, Iterator
 
-from starter_v4.ingestion import ATDFrame, ATDMetadata, SmartTagEvent
-from starter_v4.possession import FrameEvidence, FrameInference, PlayerEvidence
+from starter_v6.ingestion import ATDFrame, ATDMetadata, SmartTagEvent
+from starter_v6.possession import FrameEvidence, FrameInference, PlayerEvidence
 
 
 RESTART_TYPES = frozenset({

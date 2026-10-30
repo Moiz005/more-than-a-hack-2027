@@ -12,14 +12,23 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from games import GAME, asset_paths, require, source_frames
-from starter_v5.ingestion import half_index_by_video_frame, iter_atd_frames, parse_atd_metadata, parse_smart_tagging
-from starter_v5.inference import iter_infer_e02
-from starter_v5.pipeline import iter_frame_evidence, restart_frame_mask
+from starter_v6.ingestion import half_index_by_video_frame, iter_atd_frames, parse_atd_metadata, parse_smart_tagging
+from starter_v6.inference import iter_infer_e02
+from starter_v6.pipeline import iter_frame_evidence, restart_frame_mask
 from starter_v6.config import load_e04_config
-from starter_v5.tag_features import iter_tag_evidence
+from starter_v6.tag_features import iter_tag_evidence
 from starter_v6.hmm import decode
 from starter_v6.diagnostics import build_diagnostics
-from starter_v6.provenance import atomic_write_text, config_sha256, effective_config, file_sha256, source_sha256
+from starter_v6.provenance import (
+    atomic_write_text,
+    config_sha256,
+    dependency_manifest,
+    effective_config,
+    file_sha256,
+    runtime_source_files,
+    source_manifest,
+    source_sha256,
+)
 from starter_v6.hmm import HMMConfig
 
 
@@ -57,6 +66,16 @@ def synthetic_resource_check():
             "runtime_seconds": time.perf_counter() - started, "peak_memory_mb": peak_mb}
 
 
+def _validate_output_targets(project_root, values, overwrite=False):
+    root = (Path(project_root) / '.local-checkpoints/phase1').resolve()
+    targets = [Path(value).resolve() for value in values]
+    if len(set(targets)) != 3 or any(root not in target.parents for target in targets):
+        raise ValueError('outputs must be distinct paths under .local-checkpoints/phase1')
+    if not overwrite and any(target.exists() for target in targets):
+        raise ValueError('refusing to overwrite an existing Phase 1 output; choose distinct paths or pass --overwrite')
+    return targets
+
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
@@ -65,6 +84,7 @@ def main(argv=None):
     parser.add_argument('--output')
     parser.add_argument('--diagnostics')
     parser.add_argument('--metadata')
+    parser.add_argument('--overwrite', action='store_true', help='allow replacing existing Phase 1 outputs')
     parser.add_argument('--self-check', action='store_true', help='run synthetic semantic checks without competition data')
     parser.add_argument('--synthetic-resource-check', action='store_true', help='decode a full graded-length synthetic sequence')
     args = parser.parse_args(argv)
@@ -81,6 +101,10 @@ def main(argv=None):
         output_path = args.output or config["output"]
         diagnostics_path = args.diagnostics or config["diagnostics"]
         metadata_path = args.metadata or config["metadata"]
+        project_root = Path(__file__).resolve().parents[1]
+        targets = _validate_output_targets(
+            project_root, (output_path, diagnostics_path, metadata_path), overwrite=args.overwrite
+        )
         data_dir = args.data_dir or config['data_dir']
         paths = asset_paths(game=GAME, data_dir=data_dir, source='tactical')
         require(['atd_meta', 'atd_raw', 'smart_tagging'], game=GAME, data_dir=data_dir, source='tactical')
@@ -144,10 +168,6 @@ def main(argv=None):
             raise ValueError('incomplete emission stream')
         if seen_halves != {1, 2}:
             raise ValueError('both official graded halves must be present')
-        root = (Path(__file__).resolve().parents[1] / '.local-checkpoints/phase8').resolve()
-        targets = [Path(value).resolve() for value in (output_path, diagnostics_path, metadata_path)]
-        if len(set(targets)) != 3 or any(root not in target.parents for target in targets):
-            raise ValueError('outputs must be distinct paths under .local-checkpoints/phase8')
         for target in targets:
             target.parent.mkdir(parents=True, exist_ok=True)
         csv_path = targets[0].with_name(targets[0].name + '.tmp')
@@ -162,11 +182,8 @@ def main(argv=None):
         )
         atomic_write_text(targets[1], json.dumps(report, indent=2, sort_keys=True) + '\n')
         runtime = time.perf_counter() - started
-        project_root = Path(__file__).resolve().parents[1]
-        source_files = [project_root / "games.py"]
-        for package in (project_root / "starter_v5", project_root / "starter_v6"):
-            source_files.extend(package.rglob("*.py"))
-        source_files = [path for path in source_files if "__pycache__" not in path.parts]
+        source_files = runtime_source_files(project_root)
+        executed_source_manifest = source_manifest(source_files, project_root)
         input_identifiers = {
             key: {"filename": Path(paths[key]).name, "sha256": file_sha256(paths[key])}
             for key in ("atd_meta", "atd_raw", "smart_tagging")
@@ -184,7 +201,9 @@ def main(argv=None):
         provenance = {
             "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "output_sha256": file_sha256(targets[0]),
-            "code_sha256": source_sha256(source_files),
+            "code_sha256": source_sha256(source_files, project_root),
+            "source_manifest": executed_source_manifest,
+            "dependency_manifest": dependency_manifest(),
             "config_sha256": config_sha256(config),
             "config_file_sha256": file_sha256(args.config) if args.config else None,
             "effective_config": resolved_config,
@@ -198,7 +217,7 @@ def main(argv=None):
             "platform": platform.platform(),
             "git_revision": revision,
             "git_worktree_dirty": dirty,
-            "parent": "starter_v5",
+            "parent": "starter_v6",
             "frame_count": count,
             "runtime_seconds": runtime,
             "peak_memory_mb": peak_mb,

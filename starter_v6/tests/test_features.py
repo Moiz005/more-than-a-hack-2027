@@ -2,8 +2,8 @@
 
 import unittest
 
-from starter_v5.features import E02Config, iter_frame_features
-from starter_v5.possession import FrameEvidence, PlayerEvidence
+from starter_v6.features import E02Config, iter_frame_features
+from starter_v6.possession import FrameEvidence, PlayerEvidence
 
 
 def player(team, x, y, slot, speed=1.0):

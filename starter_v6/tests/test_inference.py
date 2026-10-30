@@ -2,9 +2,9 @@
 
 import unittest
 
-from starter_v5.features import E02Config
-from starter_v5.inference import iter_infer_e02
-from starter_v5.possession import FrameEvidence, PlayerEvidence, PossessionConfig, possession_spells
+from starter_v6.features import E02Config
+from starter_v6.inference import iter_infer_e02
+from starter_v6.possession import FrameEvidence, PlayerEvidence, PossessionConfig, possession_spells
 
 
 def frame(index, team="H", half=1, ball=True, home_x=None, away_x=None):

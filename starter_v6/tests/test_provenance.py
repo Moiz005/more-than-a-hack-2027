@@ -3,7 +3,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from starter_v6.provenance import atomic_write_text, config_sha256, effective_config, file_sha256, source_sha256
+from starter_v6.provenance import (
+    atomic_write_text,
+    config_sha256,
+    effective_config,
+    file_sha256,
+    runtime_source_files,
+    source_manifest,
+    source_sha256,
+)
 
 
 class ProvenanceTests(unittest.TestCase):
@@ -37,6 +45,15 @@ class ProvenanceTests(unittest.TestCase):
             atomic_write_text(report, "new\n")
             self.assertEqual(report.read_text(encoding="utf-8"), "new\n")
             self.assertFalse(report.with_name("report.json.tmp").exists())
+
+    def test_runtime_source_manifest_is_project_relative(self):
+        root = Path(__file__).resolve().parents[2]
+        files = runtime_source_files(root)
+        manifest = source_manifest(files, root)
+        self.assertIn("games.py", manifest)
+        self.assertTrue(any(name.startswith("starter_v6/") for name in manifest))
+        self.assertNotIn("starter_v4/possession.py", manifest)
+        self.assertNotIn("starter_v5/possession.py", manifest)
 
 
 if __name__ == "__main__":

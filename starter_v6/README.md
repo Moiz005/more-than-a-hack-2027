@@ -1,6 +1,6 @@
 # E04 — Three-state HMM and Viterbi decoding
 
-`starter_v6/` is forked from the E03 implementation in `starter_v5/`. E04 reads the same per-frame H/A/D evidence emissions produced by E03 and applies offline Viterbi decoding to each official graded half independently. The organizer `starter/`, `evaluation/`, and E01–E03 version directories are separate and remain unchanged.
+`starter_v6/` is forked from the E03 implementation in `starter_v5/`. The E04 runner now resolves its executed ingestion, feature, possession, inference, emission, tag, and pipeline modules from local `starter_v6/` copies only. E04 reads the same per-frame H/A/D evidence emissions and applies offline Viterbi decoding to each official graded half independently. The organizer `starter/`, `evaluation/`, and E01–E03 version directories are separate and remain unchanged.
 
 ## Model contract
 
@@ -23,15 +23,15 @@ Run from `more-than-a-hack-2027/` using the existing project environment and aut
 .venv/bin/python -m starter_v6.run_e04 --self-check
 .venv/bin/python -m starter_v6.run_e04 --synthetic-resource-check
 .venv/bin/python -m starter_v6.run_e04 --config starter_v6/config.example.json \
-  --output .local-checkpoints/phase8/e04_run1.csv \
-  --diagnostics .local-checkpoints/phase8/e04_run1_diagnostics.json \
-  --metadata .local-checkpoints/phase8/e04_run1_metadata.json
-.venv/bin/python evaluation/validate_submission.py .local-checkpoints/phase8/e04_run1.csv
+  --output .local-checkpoints/phase1/e04_run1.csv \
+  --diagnostics .local-checkpoints/phase1/e04_run1_diagnostics.json \
+  --metadata .local-checkpoints/phase1/e04_run1_metadata.json
+.venv/bin/python evaluation/validate_submission.py .local-checkpoints/phase1/e04_run1.csv
 ```
 
-Repeat with distinct `run2` output paths to verify byte-identical generation. Inputs must already be available locally under the configured data directory; the runner does not download or substitute assets. Candidate CSVs, diagnostics, and metadata are restricted local artifacts and must remain under the ignored `.local-checkpoints/phase8/` directory.
+Repeat with distinct `run2` output paths to verify byte-identical generation. Inputs must already be available locally under the configured data directory; the runner does not download or substitute assets. Candidate CSVs, diagnostics, and metadata are restricted local artifacts and must remain under the ignored `.local-checkpoints/phase1/` directory. Existing Phase 1 targets are never overwritten unless `--overwrite` is explicitly supplied; use distinct paths for comparisons.
 
-Metadata contains source/config/input SHA256 fingerprints, Git revision and dirty-state indicator, Python/platform identifiers, output hash, runtime, and peak process memory. Input hashes and metadata are local provenance aids only; do not publish them. No raw data, per-frame emissions, backpointers, coordinates, or frame-level differences are written to diagnostics.
+Metadata contains the transitive executed project-source manifest and hash, dependency versions, config/input SHA256 fingerprints, Git revision and dirty-state indicator, Python/platform identifiers, output hash, runtime, and peak process memory. Input hashes and metadata are local provenance aids only; do not publish them. No raw data, per-frame emissions, backpointers, coordinates, or frame-level differences are written to diagnostics.
 
 ## Limitations and status
 
@@ -48,4 +48,4 @@ E01 uses missing-aware rules and separate dead-ball evidence; E02 adds geometry,
 
 The E04 synthetic tests verify decoder arithmetic, interval semantics, and edge handling. Full-match reproducibility verifies a deterministic, structurally valid candidate. Neither establishes possession accuracy or improvement over E01–E03 or the organizer baseline. Transition probabilities are assumptions and no independent full-match possession labels are available for accuracy assessment.
 
-The local experiment record is under `.local-checkpoints/phase8/` and is ignored by Git. It includes two matching post-commit candidates, full-run diagnostics, provenance metadata, and the aggregate-only E01–E04 ablation summary. These restricted local artifacts must not be committed or published.
+The frozen E04_C7 experiment record remains under `.local-checkpoints/phase0/` and the Phase 1 isolated verification record is under `.local-checkpoints/phase1/`; both are ignored by Git. These restricted local artifacts must not be committed or published.

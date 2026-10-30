@@ -7,7 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from starter_v5.run_e01 import load_config
+from starter_v6.run_e01 import load_config
+from starter_v6.run_e04 import _validate_output_targets
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -75,13 +76,31 @@ class CliTests(unittest.TestCase):
             candidate = folder_path / "out" / "candidate.csv"
             config_path.write_text(json.dumps({"data_dir": str(folder_path / "missing")}), encoding="utf-8")
             completed = subprocess.run(
-                [sys.executable, "-m", "starter_v5.run_e03", "--config", str(config_path),
+                [sys.executable, "-m", "starter_v6.run_e03", "--config", str(config_path),
                  "--output", str(candidate)],
                 cwd=str(ROOT), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False,
             )
         self.assertEqual(completed.returncode, 2)
         self.assertIn("match data not found", completed.stderr)
         self.assertFalse(candidate.exists())
+
+    def test_phase1_output_guard_rejects_existing_targets(self):
+        with tempfile.TemporaryDirectory() as folder:
+            values = (
+                ROOT / ".local-checkpoints/phase1/test-guard/existing.csv",
+                ROOT / ".local-checkpoints/phase1/test-guard/diagnostics.json",
+                ROOT / ".local-checkpoints/phase1/test-guard/metadata.json",
+            )
+            # The guard is tested with a project-local path that already exists.
+            existing_target = ROOT / ".local-checkpoints/phase1/test-guard/existing.csv"
+            existing_target.parent.mkdir(parents=True, exist_ok=True)
+            existing_target.write_text("sentinel", encoding="utf-8")
+            try:
+                with self.assertRaisesRegex(ValueError, "refusing to overwrite"):
+                    _validate_output_targets(ROOT, values)
+            finally:
+                existing_target.unlink()
+                existing_target.parent.rmdir()
 
 
 if __name__ == "__main__":

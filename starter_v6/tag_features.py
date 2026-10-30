@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from starter_v5.ingestion import SmartTagEvent
+from starter_v6.ingestion import SmartTagEvent
 
 
 FAMILY_BY_CODE = {

@@ -1,7 +1,7 @@
 import math
 import unittest
 
-from starter_v5.emissions import FrameEmission, frame_emission, validate_emission_stream
+from starter_v6.emissions import FrameEmission, frame_emission, validate_emission_stream
 
 
 class EmissionTests(unittest.TestCase):

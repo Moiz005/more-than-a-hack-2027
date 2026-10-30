@@ -3,7 +3,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from starter_v5.run_e01 import load_config as load_parent_config
+from starter_v6.run_e01 import load_config as load_parent_config
 from starter_v6.hmm import HMMConfig, _distribution
 
 HMM_DEFAULTS = {

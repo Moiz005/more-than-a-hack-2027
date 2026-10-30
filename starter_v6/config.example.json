@@ -2,9 +2,9 @@
   "evidence_mode": "e03",
   "source": "tactical",
   "data_dir": null,
-  "output": ".local-checkpoints/phase8/e04_candidate.csv",
-  "diagnostics": ".local-checkpoints/phase8/e04_diagnostics.json",
-  "metadata": ".local-checkpoints/phase8/e04_metadata.json",
+  "output": ".local-checkpoints/phase1/e04_isolated_submission.csv",
+  "diagnostics": ".local-checkpoints/phase1/e04_isolated_diagnostics.json",
+  "metadata": ".local-checkpoints/phase1/e04_isolated_run_metadata.json",
   "possession": {},
   "features": {},
   "tag_features": {

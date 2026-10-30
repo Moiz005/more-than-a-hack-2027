@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from statistics import median
 from typing import Iterable, Iterator, Optional, Sequence, Tuple
 
-from starter_v4.possession import FrameEvidence, PlayerEvidence, _validate_frame
+from starter_v6.possession import FrameEvidence, PlayerEvidence, _validate_frame
 
 
 @dataclass(frozen=True)

@@ -1,10 +1,10 @@
 import unittest
 
-from starter_v5.ingestion import SmartTagEvent
-from starter_v5.features import E02Config, iter_frame_features
-from starter_v5.inference import _team_evidence, iter_infer_e02
-from starter_v5.possession import FrameEvidence, PlayerEvidence, PossessionConfig
-from starter_v5.tag_features import TagEvidence, iter_tag_evidence
+from starter_v6.ingestion import SmartTagEvent
+from starter_v6.features import E02Config, iter_frame_features
+from starter_v6.inference import _team_evidence, iter_infer_e02
+from starter_v6.possession import FrameEvidence, PlayerEvidence, PossessionConfig
+from starter_v6.tag_features import TagEvidence, iter_tag_evidence
 
 
 def event(code, start, end, team=None, tag_type=None):

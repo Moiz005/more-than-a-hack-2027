@@ -1,7 +1,7 @@
 """Generate deterministic E01-compatible or E02 possession candidates from local assets.
 
 Run from the competition repository root:
-    python -m starter_v4.run_e01 --evidence-mode e02 --config starter_v4/config.example.json
+    python -m starter_v6.run_e01 --evidence-mode e02 --config starter_v6/config.example.json
 
 The command never downloads data. Inputs are read locally and generated artifacts should remain
 under ignored `.local-checkpoints/` storage.
@@ -29,29 +29,29 @@ except ImportError:  # pragma: no cover - Windows has no resource module.
     resource = None
 
 from games import DATA_DIR, GAME, asset_paths, require, source_frames
-from starter_v5.features import E02Config
-from starter_v5.inference import iter_infer_e02
-from starter_v5.ingestion import (
+from starter_v6.features import E02Config
+from starter_v6.inference import iter_infer_e02
+from starter_v6.ingestion import (
     half_index_by_video_frame,
     iter_atd_frames,
     parse_atd_metadata,
     parse_smart_tagging,
 )
-from starter_v5.pipeline import (
+from starter_v6.pipeline import (
     E02SummaryAccumulator,
     InferenceSummaryAccumulator,
     TagAblationAccumulator,
     iter_frame_evidence,
     restart_frame_mask,
 )
-from starter_v5.possession import (
+from starter_v6.possession import (
     FrameEvidence,
     PlayerEvidence,
     PossessionConfig,
     iter_infer_possession,
     possession_spells,
 )
-from starter_v5.tag_features import TagEvidence, iter_tag_evidence
+from starter_v6.tag_features import TagEvidence, iter_tag_evidence
 
 
 DEFAULTS = {
@@ -138,14 +138,14 @@ def _sha256_file(path: Path) -> str:
 def _code_sha256() -> str:
     root = Path(__file__).resolve().parent
     sources = [
-        ("starter_v5/ingestion.py", root / "ingestion.py"),
-        ("starter_v5/possession.py", root / "possession.py"),
-        ("starter_v5/pipeline.py", root / "pipeline.py"),
-        ("starter_v5/features.py", root / "features.py"),
-        ("starter_v5/inference.py", root / "inference.py"),
-        ("starter_v5/tag_features.py", root / "tag_features.py"),
-        ("starter_v5/emissions.py", root / "emissions.py"),
-        ("starter_v5/run_e01.py", root / "run_e01.py"),
+        ("starter_v6/ingestion.py", root / "ingestion.py"),
+        ("starter_v6/possession.py", root / "possession.py"),
+        ("starter_v6/pipeline.py", root / "pipeline.py"),
+        ("starter_v6/features.py", root / "features.py"),
+        ("starter_v6/inference.py", root / "inference.py"),
+        ("starter_v6/tag_features.py", root / "tag_features.py"),
+        ("starter_v6/emissions.py", root / "emissions.py"),
+        ("starter_v6/run_e01.py", root / "run_e01.py"),
         ("games.py", root.parent / "games.py"),
     ]
     digest = hashlib.sha256()
@@ -219,7 +219,7 @@ def _synthetic_self_check() -> int:
     if possession_spells(labels) != [("H", 2, 6), ("A", 7, 7), ("A", 11, 11)]:
         print("synthetic E01 spell check failed", file=sys.stderr)
         return 1
-    from starter_v5.emissions import frame_emission
+    from starter_v6.emissions import frame_emission
     neutral = frame_emission(0, 1)
     if (neutral.home, neutral.away, neutral.dead) != (1 / 3, 1 / 3, 1 / 3) or neutral.informative:
         print("synthetic E03 emission self-check failed", file=sys.stderr)
