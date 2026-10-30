@@ -73,6 +73,14 @@ copy a hard parent label or change HMM transition parameters. Missing gaps that
 fail quality or recovery checks remain uncertain and are not forced to D or to
 the opposing team.
 
+Phase 6 defines `fuse_evidence()` as the fusion boundary: H/A are ownership
+conditional-on-live potentials, `live` is neutral live mass when ownership is
+unknown, and `dead` is play-state evidence. The output is finite and normalized
+for the three-state log-space HMM; these values are not calibrated probabilities.
+Confirmed structural D uses the configured `confirmed_dead_score`, while raw
+weak/medium D evidence remains magnitude-preserving. HMM transitions remain the
+documented defaults and are not fitted here.
+
 ## Limitations and status
 
 ### Differences from E01–E03

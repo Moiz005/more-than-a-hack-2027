@@ -46,6 +46,41 @@ def frame_emission(frame: int, half: int, *, home: float = 0.0, away: float = 0.
     return FrameEmission(frame, half, *(value / total for value in values), informative)
 
 
+def fuse_evidence(
+    frame: int,
+    half: int,
+    *,
+    home: float = 0.0,
+    away: float = 0.0,
+    dead: float = 0.0,
+    live: float = 0.0,
+    hard_dead: bool = False,
+    sources=(),
+) -> FrameEmission:
+    """Fuse live-team and play-state evidence into one finite emission.
+
+    `home` and `away` are ownership-conditional live scores; `live` is a
+    team-unknown live score split neutrally when no ownership scores exist;
+    `dead` is play-state evidence. These are evidence potentials, not calibrated
+    probabilities. Hard structural dead evidence may set D to one; otherwise
+    normalization retains competing live mass.
+    """
+    values = (home, away, dead, live)
+    if any(isinstance(value, bool) or not isinstance(value, (int, float))
+           or not math.isfinite(value) or value < 0.0 for value in values):
+        raise ValueError("fusion evidence must be finite and non-negative")
+    if not isinstance(hard_dead, bool):
+        raise ValueError("hard_dead must be boolean")
+    if hard_dead:
+        dead = 1.0
+    if home == 0.0 and away == 0.0 and live > 0.0:
+        home = away = live / 2.0
+    informative = bool(sources) or any(value > 0.0 for value in (home, away, dead, live))
+    return frame_emission(
+        frame, half, home=home, away=away, dead=dead, informative=informative,
+    )
+
+
 def validate_emission_stream(emissions: Iterable[FrameEmission], expected_frames: int) -> Iterator[FrameEmission]:
     """Require exactly one sequential, half-labeled emission per zero-based frame."""
     if isinstance(expected_frames, bool) or expected_frames < 0:

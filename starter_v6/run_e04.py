@@ -66,11 +66,11 @@ def synthetic_resource_check():
             "runtime_seconds": time.perf_counter() - started, "peak_memory_mb": peak_mb}
 
 
-def _validate_output_targets(project_root, values, overwrite=False):
-    root = (Path(project_root) / '.local-checkpoints/phase1').resolve()
+def _validate_output_targets(project_root, values, overwrite=False, checkpoint_root='.local-checkpoints/phase1'):
+    root = (Path(project_root) / checkpoint_root).resolve()
     targets = [Path(value).resolve() for value in values]
     if len(set(targets)) != 3 or any(root not in target.parents for target in targets):
-        raise ValueError('outputs must be distinct paths under .local-checkpoints/phase1')
+        raise ValueError('outputs must be distinct paths under the selected checkpoint root')
     if not overwrite and any(target.exists() for target in targets):
         raise ValueError('refusing to overwrite an existing Phase 1 output; choose distinct paths or pass --overwrite')
     return targets
@@ -84,7 +84,9 @@ def main(argv=None):
     parser.add_argument('--output')
     parser.add_argument('--diagnostics')
     parser.add_argument('--metadata')
-    parser.add_argument('--overwrite', action='store_true', help='allow replacing existing Phase 1 outputs')
+    parser.add_argument('--checkpoint-root', default='.local-checkpoints/phase1',
+                        help='local output root; use a distinct phase/run directory')
+    parser.add_argument('--overwrite', action='store_true', help='allow replacing existing outputs')
     parser.add_argument('--self-check', action='store_true', help='run synthetic semantic checks without competition data')
     parser.add_argument('--synthetic-resource-check', action='store_true', help='decode a full graded-length synthetic sequence')
     args = parser.parse_args(argv)
@@ -103,7 +105,8 @@ def main(argv=None):
         metadata_path = args.metadata or config["metadata"]
         project_root = Path(__file__).resolve().parents[1]
         targets = _validate_output_targets(
-            project_root, (output_path, diagnostics_path, metadata_path), overwrite=args.overwrite
+            project_root, (output_path, diagnostics_path, metadata_path),
+            overwrite=args.overwrite, checkpoint_root=args.checkpoint_root,
         )
         data_dir = args.data_dir or config['data_dir']
         paths = asset_paths(game=GAME, data_dir=data_dir, source='tactical')

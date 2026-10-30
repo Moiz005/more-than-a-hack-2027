@@ -17,7 +17,7 @@ from starter_v6.possession import (
     observe_dead_ball,
 )
 from starter_v6.tag_features import TagEvidence
-from starter_v6.emissions import FrameEmission, frame_emission
+from starter_v6.emissions import FrameEmission, fuse_evidence
 
 
 @dataclass(frozen=True)
@@ -123,10 +123,13 @@ def _team_evidence(features: FrameFeatures, config: PossessionConfig, quality: E
 
 
 def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: DeadBallObservation,
-            tag: Optional[TagEvidence] = None) -> E02FrameInference:
+            tag: Optional[TagEvidence] = None,
+            possession_config: PossessionConfig = PossessionConfig()) -> E02FrameInference:
     dead_score = max(dead.dead_score, dead.confidence if dead.cues else 0.0)
     if dead.hard_evidence:
         dead_score = 1.0
+    elif dead.confirmed:
+        dead_score = max(dead_score, possession_config.confirmed_dead_score)
     if team.team == "H":
         home, away = team.home_score, team.away_score
         if home + away == 0.0:
@@ -137,10 +140,10 @@ def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: De
             home, away = max(1.0 - team.confidence, 1e-12), team.confidence
     else:
         home = away = max(dead.live_score, 0.0) / 2.0
-    informative = bool(dead.cues or dead.live_score or team.team is not None)
-    emission = frame_emission(
+    emission = fuse_evidence(
         features.frame.frame, features.frame.half,
-        home=home, away=away, dead=dead_score, informative=informative,
+        home=home, away=away, dead=dead_score, live=dead.live_score,
+        hard_dead=dead.hard_evidence, sources=dead.source + team.source,
     )
     relation = "none"
     if tag is not None and tag.active:
@@ -196,9 +199,9 @@ def _attach_gap_evidence(
                 home += confidence
             else:
                 away += confidence
-            emission = frame_emission(
+            emission = fuse_evidence(
                 emission.frame, emission.half,
-                home=home, away=away, dead=emission.dead, informative=True,
+                home=home, away=away, dead=emission.dead, sources=("accepted_gap",),
             )
         attached.append(replace(item, emission=emission, ownership_evidence=evidence))
     return attached
@@ -282,7 +285,7 @@ def iter_infer_e02(
             gap_support_count = 0
             gap_support_start = None
             gap_attempted = False
-            yield _result(features, "X", team, finalize_dead_ball(raw_dead, False), tag)
+            yield _result(features, "X", team, finalize_dead_ball(raw_dead, False), tag, possession_config)
             continue
 
         confirmed_dead, dead_candidate_family, dead_candidate_count = confirm_dead_ball(
@@ -305,7 +308,7 @@ def iter_infer_e02(
             state = "D"
             missing_count = uncertain_count = candidate_count = 0
             candidate_team = None
-            yield _result(features, "D", team, dead, tag)
+            yield _result(features, "D", team, dead, tag, possession_config)
             continue
 
         # Observed recovery separates a new missing interval from an unresolved old transition.
@@ -336,7 +339,7 @@ def iter_infer_e02(
             if missing_count > possession_config.max_missing_frames:
                 state = "X"
             label = state if state in {"H", "A"} else "X"
-            pending_gap.append(_result(features, label, team, dead, tag))
+            pending_gap.append(_result(features, label, team, dead, tag, possession_config))
 
             opposing_team = "A" if gap_prior_state == "H" else "H" if gap_prior_state == "A" else None
             gap_support_ok = (
@@ -383,7 +386,7 @@ def iter_infer_e02(
             if uncertain_count > possession_config.max_uncertain_frames:
                 state = "X"
             label = state if state in {"H", "A"} else "X"
-            result = _result(features, label, team, dead, tag)
+            result = _result(features, label, team, dead, tag, possession_config)
         else:
             uncertain_count = 0
             observed_team = team.team
@@ -400,7 +403,7 @@ def iter_infer_e02(
                 candidate_team = None
                 candidate_count = 0
             label = state if state in {"H", "A"} else "X"
-            result = _result(features, label, team, dead, tag)
+            result = _result(features, label, team, dead, tag, possession_config)
 
         if pending_gap:
             opposing_team = "A" if gap_prior_state == "H" else "H" if gap_prior_state == "A" else None

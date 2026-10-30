@@ -11,7 +11,8 @@
     "boundary_disappearance_min_missing_frames": 50,
     "micro_dead_filter": "off",
     "micro_dead_short_min_frames": 38,
-    "micro_dead_long_min_frames": 50
+    "micro_dead_long_min_frames": 50,
+    "confirmed_dead_score": 0.99
   },
   "features": {},
   "tag_features": {

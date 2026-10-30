@@ -58,6 +58,7 @@ class PossessionConfig:
     micro_dead_filter: str = "off"
     micro_dead_short_min_frames: int = 38
     micro_dead_long_min_frames: int = 50
+    confirmed_dead_score: float = 0.99
 
     def __post_init__(self) -> None:
         positive = (
@@ -73,7 +74,7 @@ class PossessionConfig:
             value = getattr(self, name)
             if not math.isfinite(value) or value < 0:
                 raise ValueError("{} must be finite and non-negative".format(name))
-        for name in ("min_observation_confidence", "stationary_player_fraction", "contradiction_confidence"):
+        for name in ("min_observation_confidence", "stationary_player_fraction", "contradiction_confidence", "confirmed_dead_score"):
             value = getattr(self, name)
             if not math.isfinite(value) or not 0 <= value <= 1:
                 raise ValueError("{} must be in [0, 1]".format(name))
