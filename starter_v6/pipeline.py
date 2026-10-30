@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import Counter
+from dataclasses import replace
 from statistics import median
 from typing import Dict, Iterable, Iterator
 
@@ -15,6 +16,91 @@ RESTART_TYPES = frozenset({
     "throw-in", "corner kick", "goal kick", "free kick",
     "kick off (after goal)", "kick off (start)",
 })
+
+
+class RuntimeRestartActionDetector:
+    """Infer one live-transition cue from set-piece context and observed motion.
+
+    Smart Tagging identifies a restart context, not the delivery frame.  This
+    state machine therefore requires either an observed stationary setup or a
+    missing-ball interval followed by credible observed motion near a player.
+    Ordinary motion outside that context is never a restart action.
+    """
+
+    _RESTART_SPEED_MPS = 0.5
+    _MIN_DISPLACEMENT_M = 0.1
+    _MAX_DISPLACEMENT_M = 1.0
+    _CONTROL_RADIUS_M = 1.5
+
+    def __init__(self) -> None:
+        self._previous_frame = None
+        self._previous_half = None
+        self._previous_ball_xy = None
+        self._stationary_seen = False
+        self._missing_seen = False
+        self._action_emitted = False
+
+    def observe(self, frame: FrameEvidence) -> FrameEvidence:
+        if self._previous_frame is not None and frame.frame != self._previous_frame + 1:
+            raise ValueError("frames must be contiguous and ordered")
+        if self._previous_half is not None and frame.half != self._previous_half:
+            self._reset_context()
+        self._previous_frame, self._previous_half = frame.frame, frame.half
+
+        if not frame.restart_context:
+            self._reset_context()
+            self._previous_frame, self._previous_half = frame.frame, frame.half
+            return frame
+
+        if frame.ball_xy is None:
+            self._missing_seen = True
+            return frame
+
+        displacement = None
+        if self._previous_ball_xy is not None:
+            displacement = math.hypot(
+                frame.ball_xy[0] - self._previous_ball_xy[0],
+                frame.ball_xy[1] - self._previous_ball_xy[1],
+            )
+        speed = frame.ball_speed_mps
+        moving = speed is not None and speed > self._RESTART_SPEED_MPS
+        credible_displacement = (
+            displacement is None
+            or self._MIN_DISPLACEMENT_M <= displacement <= self._MAX_DISPLACEMENT_M
+        )
+        nearby_player = any(
+            math.hypot(player.x_m - frame.ball_xy[0], player.y_m - frame.ball_xy[1])
+            <= self._CONTROL_RADIUS_M
+            for player in frame.players
+        )
+
+        action = None
+        if (
+            not self._action_emitted
+            and moving
+            and credible_displacement
+            and (
+                self._stationary_seen
+                or (self._missing_seen and nearby_player)
+            )
+        ):
+            action = "restart_delivery" if self._stationary_seen else "restart_reappearance"
+            self._action_emitted = True
+
+        if speed is not None and speed <= self._RESTART_SPEED_MPS:
+            self._stationary_seen = True
+        elif displacement is not None and displacement < self._MIN_DISPLACEMENT_M:
+            self._stationary_seen = True
+        self._previous_ball_xy = frame.ball_xy
+        if action is None:
+            return frame
+        return replace(frame, restart_action=action)
+
+    def _reset_context(self) -> None:
+        self._previous_ball_xy = None
+        self._stationary_seen = False
+        self._missing_seen = False
+        self._action_emitted = False
 
 
 def restart_frame_mask(events: Iterable[SmartTagEvent], frame_count: int) -> bytearray:
@@ -80,15 +166,17 @@ def iter_frame_evidence(
     """Adapt every tactical row in strict 0-based order without materializing ATD arrays."""
     if len(half_by_frame) != len(restart_mask):
         raise ValueError("half and restart masks must have the same frame count")
+    restart_detector = RuntimeRestartActionDetector()
     expected = 0
     for raw in raw_frames:
         if raw.video_frame != expected:
             raise ValueError("expected video_frame {}, found {}".format(expected, raw.video_frame))
         if raw.frame_id != expected + 1:
             raise ValueError("expected frame_id {}, found {}".format(expected + 1, raw.frame_id))
-        yield frame_evidence_from_atd(
+        frame = frame_evidence_from_atd(
             raw, metadata, half_by_frame[expected], bool(restart_mask[expected])
         )
+        yield restart_detector.observe(frame)
         expected += 1
     if expected != len(half_by_frame):
         raise ValueError("expected {} tactical rows, found {}".format(len(half_by_frame), expected))
