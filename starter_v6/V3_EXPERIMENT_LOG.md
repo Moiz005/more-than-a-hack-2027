@@ -120,3 +120,12 @@ consumed old context from genuinely new independent stoppage evidence.
   mutually consistent yet wrong; no jump test is available across missing/half
   boundaries. Independent low-motion evidence can still establish D under its
   unchanged rules. No claim of real spellF1 improvement or public-GT use.
+- Implementation: 137fd3fbc64d59a87125defe6f04a3e1566c9574. Both clean post-commit
+  runs validated: 199319 rows, frame 0..199318, identical CSV SHA256
+  d1604474717565a460d30bdef271d4e6e9b6c088c00bec84f6ef3d97a35f74ae.
+- Source SHA256: de971b7751ebbc625d84d08e92287d10c09f480438d4e86d0b5b794b8d734683.
+  Effective-config SHA256: 500cc240b6527726f783e25df0a3143624486babe3286d57eb5272439601fae2.
+  Each run records 16 executed project source files and dependency versions.
+- Relative to Phase 1: 4 changed labels; D frames 8830 -> 8826; D runs 72 -> 72.
+  Rejected-boundary observation totals were not separately collected.
+- G3.1-G3.5 PASS / GO. Phase 4 is not implemented. No held-out accuracy results.
