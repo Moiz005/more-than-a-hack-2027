@@ -43,7 +43,7 @@ from starter_v6.inference import iter_infer_e02
 from starter_v6.hmm import decode,HMMConfig
 out=[]
 for motion in ([(10.,.1)]*3+[(10.3,2.),(10.6,2.)]+[(10.6,.1)]*4,
-               [(10.,.1)]*3+[(10.3,2.),(10.6,2.)]+[(-1.,.1)]*2):
+               [(0.,.1)]*3+[(.3,2.),(.6,2.)]+[(-1.,.1)]*2):
  d=RuntimeRestartActionDetector()
  fs=[d.observe(FrameEvidence(i,1,(x,10.),(),s,True)) for i,(x,s) in enumerate(motion)]
  rs=list(iter_infer_e02(fs))
@@ -73,7 +73,8 @@ print(json.dumps(out))
         self.assertEqual(baseline[1],current[1])
 
     def test_independent_boundary_after_consumption(self):
-        fs,rs,labels=trace(SETUP+DELIVERY+[(10.6,.1)]*2+[(-1.,.1)]*2)
+        # Keep this independent-boundary control below the existing jump bound.
+        fs,rs,labels=trace([(0.,.1)]*3+[(.3,2.),(.6,2.)]+[(.6,.1)]*2+[(-1.,.1)]*2)
         self.assertEqual(labels,'DDDHHHHDD')
         self.assertTrue(fs[-1].restart_context_consumed)
         self.assertEqual(rs[-1].inference.dead_ball_evidence.cues,('out_of_bounds',))

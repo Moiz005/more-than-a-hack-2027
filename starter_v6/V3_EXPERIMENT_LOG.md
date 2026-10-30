@@ -84,3 +84,39 @@ consumed old context from genuinely new independent stoppage evidence.
   run's metadata.json; configuration bytes and all HMM parameters are unchanged.
 - G1.1-G1.5: GO. Phase 2 is not implemented. New independent events inside
   uninterrupted masks still require independent physical evidence.
+
+## V3.3 — Boundary coordinate reliability
+
+- Start/rollback: bd757b493180a96b39d2c57e5901829d4d507b87.
+- Signal: existing features.quality.implausible_ball_jump only. A supplied-speed
+  mismatch alone does not suppress structural boundary evidence. No thresholds
+  or configuration settings changed.
+- Interface: optional default-true boundary_coordinate_reliable argument on
+  observe_dead_ball and StatefulDeadBallDetector.observe; production E02 passes
+  the feature-derived flag. Legacy raw helper callers retain their defaults.
+- Reliable boundary branch is unchanged. Rejected boundary coordinates fall
+  through to the existing non-boundary cues. If no independent D cue exists,
+  emit non-confirmable uncertainty (D=1/3, live=2/3), not hard D. Coordinate
+  rejection also prevents seeding boundary-disappearance history. Reliable
+  subsequent observations can establish D immediately under existing rules.
+- Existing non-boundary code was extracted into _observe_nonboundary_dead_ball
+  without changing its thresholds or logic. Collective/restart cues remain
+  available when the boundary observation is unreliable.
+- Causal protected-Phase-1 oracle: isolated jump HDH -> HHH; boundary D=1 -> 1/3;
+  confirmation true -> false. Reliable crossing remains HDH and one-hot D.
+  Later consistent boundary evidence confirms and can seed persistence.
+- Actual full suite: 166 passed; 0 failed/expected failures/skipped. E04
+  self-check passed. Includes HMM, import isolation, persistence and Phase 1.
+- Fixture correction: three legacy boundary-positive assertions used impossible
+  >10 m coordinate jumps. Their invented approach trajectories were corrected
+  to remain within the existing jump threshold, retaining their D expectations.
+- Exact changed functions/files: inference.iter_infer_e02; possession.
+  observe_dead_ball, _observe_nonboundary_dead_ball, StatefulDeadBallDetector.
+  observe; tests/test_boundary_quality.py, test_production_dead_ball_integration.py,
+  test_v3_context_consumption.py; this experiment log.
+- Full local runs: distinct ignored .local-checkpoints/v3/phase3/boundary_quality/
+  run1 and run2. Each metadata.json records config/source/dependency hashes.
+- Risks: true abrupt crossings may be delayed; consecutive observations can be
+  mutually consistent yet wrong; no jump test is available across missing/half
+  boundaries. Independent low-motion evidence can still establish D under its
+  unchanged rules. No claim of real spellF1 improvement or public-GT use.

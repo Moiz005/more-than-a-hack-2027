@@ -1,4 +1,5 @@
 import unittest
+from dataclasses import replace
 
 from starter_v6.features import E02Config
 from starter_v6.hmm import HMMConfig, decode
@@ -58,8 +59,13 @@ class ProductionDeadBallIntegrationTests(unittest.TestCase):
 
     def test_supported_boundary_stoppage_reaches_emission_and_decoder(self):
         frames = [live_frame(i) for i in range(3)]
-        frames += [FrameEvidence(i, 1, (-1.0, 20.0), (), 0.1) for i in range(3, 5)]
+        frames += [FrameEvidence(i, 1, (-1.0, 10.0), (), 0.1) for i in range(3, 5)]
         frames += [live_frame(i) for i in range(5, 8)]
+        # A structural positive control must approach the boundary plausibly;
+        # the old 10 m -> -1 m fixture was itself a flagged tracking jump.
+        frames = [replace(f, ball_xy=(0., 10.),
+                          players=tuple(replace(p, x_m=p.x_m-10.) for p in f.players))
+                  if f.ball_xy == (10.,10.) else f for f in frames]
         results = production(frames)
         self.assertTrue(all(result.inference.dead_ball_evidence.confirmed for result in results[3:5]))
         self.assertTrue(all(result.emission.dead > result.emission.home for result in results[3:5]))

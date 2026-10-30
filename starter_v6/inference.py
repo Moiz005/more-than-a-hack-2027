@@ -273,6 +273,7 @@ def iter_infer_e02(
             frame, team, possession_config,
             live_reliable=not (features.quality.implausible_ball_jump
                                or features.quality.ball_speed_inconsistent),
+            boundary_coordinate_reliable=not features.quality.implausible_ball_jump,
         ).dead_ball_evidence
         if frame.half == 0:
             yield from _resolve_gap(

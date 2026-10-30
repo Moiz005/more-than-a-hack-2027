@@ -206,6 +206,7 @@ def observe_dead_ball(
     frame: FrameEvidence,
     team_observation: TeamObservation,
     config: PossessionConfig,
+    boundary_coordinate_reliable: bool = True,
 ) -> DeadBallObservation:
     """Compute raw dead-ball cues independently of resolved team ownership.
 
@@ -226,7 +227,7 @@ def observe_dead_ball(
         bx < -margin or bx > config.pitch_length_m + margin
         or by < -margin or by > config.pitch_width_m + margin
     )
-    if beyond_margin:
+    if beyond_margin and boundary_coordinate_reliable:
         hard = (
             bx <= -crossing or bx >= config.pitch_length_m + crossing
             or by <= -crossing or by >= config.pitch_width_m + crossing
@@ -243,6 +244,20 @@ def observe_dead_ball(
             confirmation_family="out_of_bounds",
         )
 
+    raw = _observe_nonboundary_dead_ball(frame, team_observation, config)
+    if beyond_margin and not boundary_coordinate_reliable and not raw.cues:
+        return DeadBallObservation(
+            (), 0.0, source=("ball_geometry",), validity=("implausible_boundary_jump",),
+            event_context="boundary_uncertainty", confirmable=False,
+            dead_score=1.0 / 3.0, live_score=2.0 / 3.0,
+        )
+    return raw
+
+
+def _observe_nonboundary_dead_ball(
+    frame: FrameEvidence, team_observation: TeamObservation, config: PossessionConfig,
+) -> DeadBallObservation:
+    """Existing non-boundary cues, also available when boundary coordinates fail quality."""
     # A restart action is the transition back to play, not a dead-ball cue.
     if frame.restart_action is not None:
         return DeadBallObservation(
@@ -348,6 +363,7 @@ class StatefulDeadBallDetector:
         team: TeamObservation,
         config: PossessionConfig,
         live_reliable: bool = True,
+        boundary_coordinate_reliable: bool = True,
     ) -> RawPlayStateObservation:
         if self._previous_frame is not None and frame.frame != self._previous_frame + 1:
             raise ValueError("frames must be contiguous and ordered")
@@ -358,14 +374,14 @@ class StatefulDeadBallDetector:
             self._stoppage = None
         self._previous_frame, self._previous_half = frame.frame, frame.half
 
-        raw = observe_dead_ball(frame, team, config)
+        raw = observe_dead_ball(frame, team, config, boundary_coordinate_reliable)
         # Existing physical boundary/dead cues keep precedence. Only reliable
         # observed live evidence retires memory; a missing ball never does.
         if (frame.ball_xy is not None and not raw.cues and live_reliable
                 and (raw.event_context in {"restart_action", "live_motion"}
                      or (team.team is not None and team.confidence >= config.contradiction_confidence))):
             self._stoppage = None
-        distance = _boundary_distance(frame, config)
+        distance = _boundary_distance(frame, config) if boundary_coordinate_reliable else None
         if distance is not None and distance <= config.out_of_bounds_margin_m:
             self._last_boundary_frame = frame.frame
             self._boundary_age = 0
