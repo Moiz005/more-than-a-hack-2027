@@ -1,0 +1,17 @@
+{
+  "python_implementation": "CPython",
+  "python_version": "3.11.16",
+  "verified_platform": "macOS-15.7.9-x86_64-i386-64bit",
+  "installed_distributions": {
+    "numpy": "2.4.6",
+    "pandas": "3.1.0",
+    "pip": "24.0",
+    "python-dateutil": "3.0.0",
+    "setuptools": "79.0.1",
+    "six": "1.17.0",
+    "tzdata": "2026.6"
+  },
+  "prediction_dependencies": "Python standard library; historical loaded-package manifest also records setuptools",
+  "validation_dependencies": "Official scorer/validator use numpy and pandas with recorded installed dependencies",
+  "limitations": "Installed-environment snapshot, not wheel-hash lock or operating-system image. No fresh package installation or cross-platform reproduction claimed."
+}

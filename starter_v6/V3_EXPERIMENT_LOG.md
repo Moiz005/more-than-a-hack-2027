@@ -204,3 +204,25 @@ consumed old context from genuinely new independent stoppage evidence.
 - No real-label ranking, public-window scoring or external acquisition.
   Conditional missed-action stale-context risk remains documented, not tuned.
   Phase 7 and Phase 8 are not implemented.
+
+## V3.8 — Release freeze preparation (Phase 7 skipped)
+
+- Start: ee57304922ff29aa9e3372e1603510669d5d8d56; selected executable C4
+  6642298534727f59740d58efba82d678c35dae98. C2/C3/C4/Phase6 executed-source
+  identity reverified. No production/config changes, packages installed or tuning.
+- Fresh full regression: 194 passed (187 existing + 7 invented official S1-S7
+  semantics checks); zero failures/errors/skips/expected failures. E04 self-check
+  passed. R1-R18 coverage and limitations: V3_RELEASE_ACCEPTANCE.md.
+- Prior public-evaluation artifacts exist. Scores were not read/rerun; preserved.
+  Fresh admissible selection and retrospective uncertainty are disclosed in
+  V3_RELEASE_DECISION.md. No population accuracy ranking or external acquisition.
+- Current three input fingerprints equal preserved Phase 4 run1. Complete
+  installed-environment snapshot supplements the historical partial manifest.
+- Intended tag e04-v3-g8-release is conditional on two full clean-checkout runs
+  of this exact release-preparation commit, official validation and expected
+  SHA256 d1604474717565a460d30bdef271d4e6e9b6c088c00bec84f6ef3d97a35f74ae.
+  Observed final commit/tag/results are recorded after verification in ignored
+  .local-checkpoints/v3/phase8/release_candidate_20261031/release_verification.json.
+  Do not treat preparation expectations as completed generation evidence.
+- Manifest, runbook, environment pins and technical draft accompany this entry.
+  Phase 9 and external submission are not authorized by this freeze record.
