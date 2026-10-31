@@ -182,3 +182,25 @@ consumed old context from genuinely new independent stoppage evidence.
 - Actual verification: full unittest discovery 182 passed, zero failures/skips/
   expected failures; E04 self-check passed. HMM/import isolation and prior phase
   regressions are included. Production/config/protected directories unchanged.
+
+## V3.6 — Candidate assessment and causal ablation
+
+- Start/rollback: 6642298534727f59740d58efba82d678c35dae98.
+- Artifacts: V3_CANDIDATE_LEDGER.md, V3_PHASE6_ABLATION.md,
+  tests/test_phase6_ablation.py and this log. Production/config unchanged.
+- C0-C4 source hashes recomputed against observed runtime manifests; C2-C4
+  execute identical source. Config, HMM and ownership AST comparisons pass.
+- A1 persistence intervention, A2 historical context fix, A3 boundary fix,
+  A4 isolated action-field redundancy and coupled-consumption control, A5
+  canonical lifecycle all verified. Full detector-off M2 is not isolated;
+  no production toggle or monkey patch was introduced.
+- 5 new ablation tests pass; full suite 187 passed, no failures/skips/expected
+  failures; E04 self-check passed. Existing HMM/import/lifecycle regressions pass.
+- Existing C0-C3 run1/run2 byte equality and SHA256 reverified; run1 CSVs
+  officially revalidated, all 199319 rows/frame0..199318. No new generation or
+  expensive private instrumentation. Metadata/known provenance gaps in ledger.
+- Decision A: select C4 6642298534727f59740d58efba82d678c35dae98 for release
+  preparation; preserve C0 fallback. SKIP optional Phase 7. G6.1-G6.5 PASS.
+- No real-label ranking, public-window scoring or external acquisition.
+  Conditional missed-action stale-context risk remains documented, not tuned.
+  Phase 7 and Phase 8 are not implemented.
