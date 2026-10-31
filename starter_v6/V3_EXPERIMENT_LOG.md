@@ -160,3 +160,25 @@ consumed old context from genuinely new independent stoppage evidence.
   Executed-source hash, effective config and dependency manifest match Phase 3;
   each runtime manifest covers 16 project sources. No label changes.
 - G4.1-G4.5 PASS / GO for supported contracts. Phase 5 is not implemented.
+
+## V3.5 — Independent external evaluation feasibility
+
+- Start/rollback: 35749fdf3652ba501cead2d61b96651232925164.
+- Documentation-only source/license investigation, 2026-10-31. Full inventory,
+  primary links and conditional protocol: EXTERNAL_VALIDATION_FEASIBILITY.md.
+- Outcome: NO HELD-OUT LABELS AVAILABLE qualified in this workspace. This does
+  not assert global absence: original CC BY 4.0 IDSSE has documented frame-level
+  possession/status fields and is the strongest conditional lead. Acquisition
+  (349–419 MB/match) and detailed flag provenance/semantics remain unresolved.
+- Also reviewed Metrica samples, SkillCorner, StatsBomb/Hudl, PFF World Cup,
+  SoccerTrack v2. No external asset downloads, accounts, new annotation or fees.
+- Adapter/scorer implementation and T1–T12: NOT IMPLEMENTED/NOT RUN because
+  no source passed every gate. Frozen candidate comparison NOT RUN. No scores.
+- Official scorer inspected: all five spell IoUs required; halfwise X semantics
+  differ from raw macroF1. Phase 4 .5-only helper is not full spellF1.
+- No production changes. FULL COMPETITION RUN NOT REPEATED — NO PRODUCTION CHANGES.
+- G5.1-G5.3 PASS; G5.4 NOT APPLICABLE — NO EXTERNAL EVALUATION PERFORMED.
+  GO for completed feasibility; Phase 6 is not implemented. No accuracy ranking.
+- Actual verification: full unittest discovery 182 passed, zero failures/skips/
+  expected failures; E04 self-check passed. HMM/import isolation and prior phase
+  regressions are included. Production/config/protected directories unchanged.
