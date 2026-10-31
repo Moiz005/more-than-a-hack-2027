@@ -150,3 +150,13 @@ consumed old context from genuinely new independent stoppage evidence.
 - Gate: supported lifecycle contracts pass; unsupported/ambiguous cases are
   explicitly limitations. No penalty/goal onset detector, touch model or new
   context identity was introduced. No public-ground-truth use or accuracy claim.
+- Harness implementation commit: a6f013a06e0039ef2fbc2a0708dc851f2c0d823c.
+- Exact assertion report: 21 fixture evaluations, expected/actual H=24/A=2,
+  26 one-to-one matches at IoU=1; offsets, false/missed splits and merges all 0.
+  These include deterministic decoder controls; they are not football accuracy.
+- Both full runs validated, 199319 rows/frame 0..199318, clean committed source.
+  Both SHA256 and protected Phase 3 output match:
+  d1604474717565a460d30bdef271d4e6e9b6c088c00bec84f6ef3d97a35f74ae.
+  Executed-source hash, effective config and dependency manifest match Phase 3;
+  each runtime manifest covers 16 project sources. No label changes.
+- G4.1-G4.5 PASS / GO for supported contracts. Phase 5 is not implemented.
