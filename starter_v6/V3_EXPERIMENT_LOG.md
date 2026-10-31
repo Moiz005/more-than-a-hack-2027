@@ -129,3 +129,24 @@ consumed old context from genuinely new independent stoppage evidence.
 - Relative to Phase 1: 4 changed labels; D frames 8830 -> 8826; D runs 72 -> 72.
   Rejected-boundary observation totals were not separately collected.
 - G3.1-G3.5 PASS / GO. Phase 4 is not implemented. No held-out accuracy results.
+
+## V3.4 — Synthetic lifecycle and spell-boundary integration
+
+- Start/rollback: 4f14c6a6bf72bf4498c942dd16d815bb5787d01b.
+- Files: tests/lifecycle_harness.py, tests/test_lifecycle_catalog.py,
+  LIFECYCLE.md, this log. No production correction or parameter change.
+- ATD typed fixtures -> real adapter/context detector -> E02 features/evidence/
+  confirmation/persistence/fusion -> per-half HMM -> spells. Parser inputs and
+  synthetic half masks replace licensed loading only. Trace rows are invented.
+- L1-L12 expectations, ambiguity matrix and run instructions: LIFECYCLE.md.
+- Actual full discovery: 182 passed, 0 failed/skipped/expected failures.
+  Lifecycle suite: 16 passing tests with subcases. E04 self-check passed.
+  Existing HMM brute-force, import isolation, phase regressions and persistence
+  tests pass. Official spell matching checked only on invented intervals.
+- No production behavior changed; no model enabled/disabled comparison is
+  applicable. Exact source equivalence and full-output hashes are the controls.
+- Full-run paths: .local-checkpoints/v3/phase4/lifecycle_integration/run1 and run2.
+  Run metadata records source/config/dependency provenance and clean commit.
+- Gate: supported lifecycle contracts pass; unsupported/ambiguous cases are
+  explicitly limitations. No penalty/goal onset detector, touch model or new
+  context identity was introduced. No public-ground-truth use or accuracy claim.
