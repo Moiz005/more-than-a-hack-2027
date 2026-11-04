@@ -60,15 +60,46 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(result.frame.ball_xy, (20.0, 0.0))
         self.assertTrue(0.0 <= result.quality.confidence_weight <= 1.0)
 
-    def test_slot_population_change_is_a_quality_flag_not_an_identity_claim(self):
+    def test_provider_speed_and_derived_displacement_are_separately_exposed(self):
+        frames = [
+            FrameEvidence(0, 1, (1.0, 1.0), (), ball_speed_mps=7.0),
+            FrameEvidence(1, 1, (1.4, 1.0), (), ball_speed_mps=3.0),
+        ]
+        result = list(iter_frame_features(frames, self.config))[1]
+        self.assertEqual(result.motion.provider_ball_speed_mps, 3.0)
+        self.assertEqual(result.motion.displacement_gap_frames, 1)
+        self.assertAlmostEqual(result.motion.derived_ball_speed_mps, 10.0)
+        self.assertIsNone(result.motion.provider_home_player_speed_median_mps)
+
+    def test_long_missing_gap_does_not_derive_ball_velocity(self):
+        frames = [
+            FrameEvidence(0, 1, (1.0, 1.0), ()),
+            FrameEvidence(1, 1, None, ()),
+            FrameEvidence(2, 1, (2.0, 1.0), ()),
+        ]
+        result = list(iter_frame_features(frames, self.config))[-1]
+        self.assertIsNone(result.motion.derived_ball_speed_mps)
+        self.assertIsNone(result.motion.ball_velocity_mps)
+
+    def test_slot_switch_is_quality_metadata_not_player_acceleration(self):
         frames = [
             FrameEvidence(0, 1, (0.0, 0.0), (player("H", 0.2, 0.0, 0), player("A", 3.0, 0.0, 1))),
             FrameEvidence(1, 1, (0.0, 0.0), (player("H", 0.2, 0.0, 2), player("A", 3.0, 0.0, 3))),
         ]
         result = list(iter_frame_features(frames, self.config))[1]
-        self.assertTrue(result.quality.track_population_change)
+        self.assertTrue(result.quality.slot_set_change)
         self.assertIn("observation_population_change", result.quality.flags)
-        self.assertLess(result.quality.confidence_weight, 1.0)
+        self.assertEqual(result.motion.home_centroid_speed_mps, 0.0)
+        self.assertEqual(result.motion.provider_home_player_speed_median_mps, 1.0)
+
+    def test_observation_population_change_is_quality_metadata(self):
+        frames = [
+            FrameEvidence(0, 1, (0.0, 0.0), (player("H", 0.2, 0.0, 0),)),
+            FrameEvidence(1, 1, (0.0, 0.0), (player("H", 0.2, 0.0, 7), player("A", 3.0, 0.0, 8))),
+        ]
+        result = list(iter_frame_features(frames, self.config))[1]
+        self.assertTrue(result.quality.slot_set_change)
+        self.assertIn("observation_population_change", result.quality.flags)
 
     def test_gap_motion_uses_last_observed_ball_as_context_only(self):
         frames = [

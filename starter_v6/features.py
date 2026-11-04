@@ -70,12 +70,14 @@ class SpatialFeatures:
 
 @dataclass(frozen=True)
 class MotionFeatures:
+    provider_ball_speed_mps: Optional[float]
     derived_ball_speed_mps: Optional[float]
     ball_velocity_mps: Optional[Tuple[float, float]]
+    displacement_gap_frames: Optional[int]
     home_centroid_speed_mps: Optional[float]
     away_centroid_speed_mps: Optional[float]
-    home_player_speed_median_mps: Optional[float]
-    away_player_speed_median_mps: Optional[float]
+    provider_home_player_speed_median_mps: Optional[float]
+    provider_away_player_speed_median_mps: Optional[float]
     home_ball_comotion: Optional[float]
     away_ball_comotion: Optional[float]
     last_ball_anchor_xy: Optional[Tuple[float, float]]
@@ -95,7 +97,7 @@ class ObservationQuality:
     duplicate_observations: int
     implausible_ball_jump: bool
     ball_speed_inconsistent: bool
-    track_population_change: bool
+    slot_set_change: bool
     out_of_bounds: bool
     confidence_weight: float
     flags: Tuple[str, ...]
@@ -270,6 +272,7 @@ def iter_frame_features(
         else:
             state.gap_frames = 0
 
+        # Player speed is supplied by ATD; no finite-difference slot tracking is used.
         h_speeds = [player.speed_mps for player in home if player.speed_mps is not None]
         a_speeds = [player.speed_mps for player in away if player.speed_mps is not None]
         player_speed = {
@@ -283,7 +286,10 @@ def iter_frame_features(
         one_team = bool(home) != bool(away)
         low_coverage = len(all_unique) < config.low_player_count
         slots = {player.track_id for player in frame.players if player.track_id is not None}
-        population_change = bool(state.previous is not None and state.last_visible_slots and slots and slots != state.last_visible_slots)
+        population_change = bool(
+            state.previous is not None and state.last_visible_slots and slots
+            and slots != state.last_visible_slots
+        )
         out_of_bounds = bool(ball is not None and (
             ball[0] < 0 or ball[0] > config.pitch_length_m or ball[1] < 0 or ball[1] > config.pitch_width_m
         ))
@@ -328,7 +334,9 @@ def iter_frame_features(
             len(home), len(away), density_h, density_a, contested, boundary_distance,
         )
         motion = MotionFeatures(
-            derived_ball_speed, ball_velocity, centroid_speeds["H"], centroid_speeds["A"],
+            frame.ball_speed_mps, derived_ball_speed, ball_velocity,
+            1 if ball_velocity is not None else None,
+            centroid_speeds["H"], centroid_speeds["A"],
             player_speed["H"], player_speed["A"], home_comotion, away_comotion,
             anchor, anchor_nearest["H"], anchor_nearest["A"],
             gap_scores["H"], gap_scores["A"], gap_candidate,
