@@ -1,4 +1,4 @@
-"""Smart Tagging context extraction for HBK-01 opening kickoffs.
+"""Smart Tagging context extraction for HBK-01 kickoff events.
 
 This module only identifies bounded search context. It never emits submission
 labels, infers a legal LIVE/DEAD transition, or chooses a kickoff execution
@@ -17,6 +17,11 @@ from starter_v6.timeline import TacticalTimeline, build_tactical_timeline
 
 SET_PIECES_CODE = "set pieces"
 OPENING_KICKOFF_TYPE = "kick off (start)"
+AFTER_GOAL_KICKOFF_TYPE = "kick off (after goal)"
+KICKOFF_TYPES = {
+    "opening": OPENING_KICKOFF_TYPE,
+    "after_goal": AFTER_GOAL_KICKOFF_TYPE,
+}
 CANDIDATE_AVAILABLE = "CANDIDATE_AVAILABLE"
 AMBIGUOUS = "AMBIGUOUS"
 MISSING_TAG = "MISSING_TAG"
@@ -85,6 +90,14 @@ class KickoffTagCandidate:
     selection_explanation: str
     warnings: Tuple[str, ...] = ()
 
+    @property
+    def kickoff_kind(self) -> Optional[str]:
+        normalized = _normalize(self.type_value)
+        for kind, kickoff_type in KICKOFF_TYPES.items():
+            if normalized == kickoff_type:
+                return kind
+        return None
+
 
 @dataclass(frozen=True)
 class KickoffTagInventory:
@@ -94,37 +107,40 @@ class KickoffTagInventory:
     frame_count: int
     half_ranges: Tuple[Tuple[int, int, int], ...]
 
-    def candidates_for_half(self, half: int) -> Tuple[KickoffTagCandidate, ...]:
+    def candidates_for_half(self, half: int, kickoff_type: Optional[str] = None) -> Tuple[KickoffTagCandidate, ...]:
+        if kickoff_type is not None and kickoff_type not in KICKOFF_TYPES:
+            raise ValueError("unknown kickoff_type: {}".format(kickoff_type))
         return tuple(record for record in self.records
-                     if record.eligible and record.half == half)
+                     if record.eligible and record.half == half
+                     and (kickoff_type is None or record.kickoff_kind == kickoff_type))
 
-    def status_for_half(self, half: int) -> str:
-        count = len(self.candidates_for_half(half))
+    def status_for_half(self, half: int, kickoff_type: Optional[str] = None) -> str:
+        count = len(self.candidates_for_half(half, kickoff_type=kickoff_type))
         if count == 0:
             return MISSING_TAG
         if count > 1:
             return AMBIGUOUS
         return CANDIDATE_AVAILABLE
 
-    def selected_candidate(self, half: int) -> Optional[KickoffTagCandidate]:
+    def selected_candidate(self, half: int, kickoff_type: Optional[str] = None) -> Optional[KickoffTagCandidate]:
         """Return a candidate only when extraction leaves exactly one option."""
-        candidates = self.candidates_for_half(half)
+        candidates = self.candidates_for_half(half, kickoff_type=kickoff_type)
         return candidates[0] if len(candidates) == 1 else None
 
 
-def extract_opening_kickoff_candidates(
+def extract_kickoff_candidates(
     events: Iterable[SmartTagEvent],
     timeline: Optional[TacticalTimeline] = None,
     search_margin_before_frames: int = DEFAULT_SEARCH_MARGIN_BEFORE_FRAMES,
     search_margin_after_frames: int = DEFAULT_SEARCH_MARGIN_AFTER_FRAMES,
+    allowed_types: Optional[Iterable[str]] = None,
 ) -> KickoffTagInventory:
-    """Extract opening-kickoff search context without selecting execution.
+    """Extract kickoff search context without selecting execution.
 
-    Exact matching is limited to code SET PIECES and Type Kick Off (Start),
-    after case/whitespace normalization. Every input event is retained in the
-    returned inventory so excluded, malformed, duplicate, and wrong-half
-    records remain visible to an audit. Search bounds are half-open and are
-    clipped to the source frame count.
+    By default, exact matching accepts opening and after-goal kickoff types.
+    Every input event is retained so excluded, malformed, duplicate, and
+    wrong-half records remain visible to an audit. Search bounds are half-open
+    and clipped to the source frame count.
     """
     _valid_margin(search_margin_before_frames, "search_margin_before_frames")
     _valid_margin(search_margin_after_frames, "search_margin_after_frames")
@@ -134,6 +150,11 @@ def extract_opening_kickoff_candidates(
     ranges_by_half: Dict[int, Tuple[int, int]] = {
         half: (start, end) for half, start, end in half_ranges
     }
+    normalized_allowed_types = {
+        _normalize(value) for value in (allowed_types if allowed_types is not None else KICKOFF_TYPES.values())
+    }
+    if not normalized_allowed_types or not normalized_allowed_types.issubset(set(KICKOFF_TYPES.values())):
+        raise ValueError("allowed_types must contain known kickoff types")
     records: List[KickoffTagCandidate] = []
 
     for event_index, event in enumerate(events):
@@ -144,16 +165,20 @@ def extract_opening_kickoff_candidates(
         half = _half_number(half_value)
         warnings: List[str] = []
         eligible = True
-        explanation = "opening kickoff candidate"
+        explanation = "kickoff candidate"
 
         normalized_code = _normalize(event.code)
         normalized_type = _normalize(type_value)
         if normalized_code != SET_PIECES_CODE:
             eligible = False
             explanation = "excluded: code is not SET PIECES"
-        elif normalized_type != OPENING_KICKOFF_TYPE:
+        elif normalized_type not in normalized_allowed_types:
             eligible = False
-            explanation = "excluded: Type is not Kick Off (Start)"
+            explanation = "excluded: Type is not a supported kickoff type"
+        else:
+            explanation = "{} kickoff candidate".format(
+                "opening" if normalized_type == OPENING_KICKOFF_TYPE else "after-goal",
+            )
 
         raw_start = event.start_s
         raw_end = event.end_s
@@ -213,13 +238,31 @@ def extract_opening_kickoff_candidates(
     return KickoffTagInventory(tuple(records), frame_count, half_ranges)
 
 
+def extract_opening_kickoff_candidates(
+    events: Iterable[SmartTagEvent],
+    timeline: Optional[TacticalTimeline] = None,
+    search_margin_before_frames: int = DEFAULT_SEARCH_MARGIN_BEFORE_FRAMES,
+    search_margin_after_frames: int = DEFAULT_SEARCH_MARGIN_AFTER_FRAMES,
+) -> KickoffTagInventory:
+    """Backward-compatible extraction limited to opening kickoff tags."""
+    return extract_kickoff_candidates(
+        events, timeline=timeline,
+        search_margin_before_frames=search_margin_before_frames,
+        search_margin_after_frames=search_margin_after_frames,
+        allowed_types=(OPENING_KICKOFF_TYPE,),
+    )
+
+
 __all__ = [
     "AMBIGUOUS",
+    "AFTER_GOAL_KICKOFF_TYPE",
     "CANDIDATE_AVAILABLE",
     "DEFAULT_SEARCH_MARGIN_AFTER_FRAMES",
     "DEFAULT_SEARCH_MARGIN_BEFORE_FRAMES",
     "KickoffTagCandidate",
     "KickoffTagInventory",
+    "KICKOFF_TYPES",
     "MISSING_TAG",
+    "extract_kickoff_candidates",
     "extract_opening_kickoff_candidates",
 ]

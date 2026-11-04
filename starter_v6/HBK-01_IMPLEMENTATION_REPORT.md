@@ -150,3 +150,9 @@ strict setup evidence is insufficient. The tactical-only audit produced local
 manual-check estimates of `00:07:27.5` (first half, frame 11188) and
 `01:15:46.4` (second half, frame 113660). Both remain audit-only; the policy
 reported zero label changes and did not write an overlay submission.
+
+The all-kickoffs tactical audit also covered four eligible post-goal kickoff
+tags. Across six eligible events (two opening, four post-goal), five returned
+`ESTIMATED_FRAME` and one returned `INSUFFICIENT_EVIDENCE`. No post-goal result
+changed labels; only opening results were passed to the boundary policy.
+The final audit artifact is `.local-checkpoints/hbk01/hbk01-all-kickoffs-final-20261105/`.

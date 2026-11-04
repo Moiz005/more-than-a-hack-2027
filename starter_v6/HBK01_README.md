@@ -31,6 +31,12 @@ interval but strict centre setup is unavailable, audit mode reports
 This is intended for manual video inspection only. It is never used by the
 overlay policy or converted into a submission label.
 
+Audit mode covers both supported kickoff Smart Tag types: opening `Kick Off
+(Start)` and post-goal `Kick Off (After Goal)`. Every eligible event receives
+its own event-indexed detection record. Only the two opening results feed the
+existing half-boundary policy; post-goal detections remain informational until
+a separate restart-possession policy is justified.
+
 The first-half result is diagnostic only. A rejected or ambiguous second-half
 result leaves the parent labels unchanged and causes `overlay` to exit with an
 error without writing the requested submission.
@@ -63,7 +69,7 @@ The metadata captures the parent commit/config hash, HBK-01 config/source
 hashes, tactical input identifiers, runtime, Python version, selected mode,
 and output hash. These records are local provenance, not accuracy evidence.
 
-## Phase 8 release status
+## Phase 8 historical release status
 
 As of 2026-11-05, HBK-01 is **GO only as an isolated engineering experiment**
 and **NO-GO for overlay promotion**. The canonical source is on

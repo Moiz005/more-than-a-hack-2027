@@ -63,6 +63,7 @@ from starter_v6.kickoff_atd import (
 from starter_v6.kickoff_tags import (
     MISSING_TAG,
     KickoffTagCandidate,
+    extract_kickoff_candidates,
     extract_opening_kickoff_candidates,
 )
 
@@ -301,6 +302,32 @@ def _detect_opening_kickoffs(
     return results, inventory
 
 
+def _detect_all_kickoffs(
+    paths: Mapping[str, Path],
+    timeline: object,
+    detector_config: KickoffATDConfig,
+) -> Tuple[Mapping[int, KickoffDetectionResult], object, Mapping[int, KickoffDetectionResult]]:
+    """Detect all supported kickoff-tag events while isolating boundary results."""
+    opening_results, _opening_inventory = _detect_opening_kickoffs(
+        paths, timeline, detector_config,
+    )
+    metadata = parse_atd_metadata(paths["atd_meta"])
+    events = parse_smart_tagging(paths["smart_tagging"], expected_frames=timeline.frame_count)
+    inventory = extract_kickoff_candidates(events, timeline=timeline)
+    detections: Dict[int, KickoffDetectionResult] = {}
+    for candidate in inventory.records:
+        if not candidate.eligible:
+            continue
+        if candidate.kickoff_kind == "opening":
+            detections[candidate.event_index] = opening_results[candidate.half]
+            continue
+        detections[candidate.event_index] = detect_kickoff_execution(
+            _candidate_frames(paths["atd_raw"], metadata, timeline.frame_count, candidate),
+            metadata, candidate, timeline=timeline, config=detector_config,
+        )
+    return opening_results, inventory, detections
+
+
 def _candidate_dict(candidate: KickoffTagCandidate) -> Dict[str, object]:
     return {
         "event_index": candidate.event_index,
@@ -319,6 +346,25 @@ def _candidate_dict(candidate: KickoffTagCandidate) -> Dict[str, object]:
         "eligible": candidate.eligible,
         "selection_explanation": candidate.selection_explanation,
         "warnings": list(candidate.warnings),
+    }
+
+
+def _kickoff_audit_dict(
+    candidate: KickoffTagCandidate,
+    result: KickoffDetectionResult,
+) -> Dict[str, object]:
+    return {
+        "event_index": candidate.event_index,
+        "kickoff_kind": candidate.kickoff_kind,
+        "half": candidate.half,
+        "type": candidate.type_value,
+        "tag_start_seconds": candidate.raw_start_seconds,
+        "tag_end_seconds": candidate.raw_end_seconds,
+        "tag_start_frame": candidate.start_frame,
+        "tag_end_frame": candidate.end_frame,
+        "search_start_frame": candidate.search_start_frame,
+        "search_end_frame": candidate.search_end_frame,
+        "detection": _detection_dict(result),
     }
 
 
@@ -426,6 +472,7 @@ def _run(config: Mapping[str, object], config_path: Optional[Path], checkpoint_r
     paths: Mapping[str, Path]
     results: Mapping[int, KickoffDetectionResult] = {}
     inventory = None
+    kickoff_event_results: Mapping[int, KickoffDetectionResult] = {}
     policy = None
     warnings: List[str] = []
     parent_output_sha256 = None
@@ -442,9 +489,19 @@ def _run(config: Mapping[str, object], config_path: Optional[Path], checkpoint_r
             final_labels = parent_labels
             output_bytes = parent_bytes
         else:
-            results, inventory = _detect_opening_kickoffs(
-                paths, timeline, config["detector"],
-            )
+            if mode == "audit":
+                results, inventory, kickoff_event_results = _detect_all_kickoffs(
+                    paths, timeline, config["detector"],
+                )
+            else:
+                results, inventory = _detect_opening_kickoffs(
+                    paths, timeline, config["detector"],
+                )
+                kickoff_event_results = {
+                    candidate.event_index: results[candidate.half]
+                    for candidate in inventory.records
+                    if candidate.eligible and candidate.kickoff_kind == "opening"
+                }
             policy = apply_kickoff_prefix(
                 parent_labels, timeline, results, mode=AUDIT if mode == "audit" else OVERLAY,
             )
@@ -481,6 +538,11 @@ def _run(config: Mapping[str, object], config_path: Optional[Path], checkpoint_r
         "parent_output_sha256": parent_output_sha256,
         "candidates": [
             _candidate_dict(item) for item in (inventory.records if inventory is not None else ())
+        ],
+        "kickoff_detections": [
+            _kickoff_audit_dict(item, kickoff_event_results[item.event_index])
+            for item in (inventory.records if inventory is not None else ())
+            if item.eligible and item.event_index in kickoff_event_results
         ],
         "detectors": {
             str(half): _half_summary(results, half) for half in sorted(results)

@@ -8,6 +8,7 @@ from starter_v6.kickoff_tags import (
     AMBIGUOUS,
     CANDIDATE_AVAILABLE,
     MISSING_TAG,
+    extract_kickoff_candidates,
     extract_opening_kickoff_candidates,
 )
 
@@ -154,6 +155,33 @@ class KickoffTagExtractionTests(unittest.TestCase):
         self.assertEqual(candidate.team_value, "Barcelona")
         self.assertNotIn(candidate.team_value, {"H", "A", "D", "X"})
         self.assertEqual(candidate.source, "smart_tagging")
+
+    def test_generic_extractor_accepts_opening_and_after_goal_kickoffs(self):
+        inventory = extract_kickoff_candidates([
+            event(start=105, end=115, tag_type="Kick Off (Start)"),
+            event(start=125, end=135, tag_type="Kick Off (After Goal)"),
+            event(start=140, end=150, tag_type="Corner Kick"),
+        ], timeline=timeline())
+
+        self.assertEqual(len(inventory.candidates_for_half(1)), 2)
+        self.assertEqual(
+            [candidate.type_value for candidate in inventory.candidates_for_half(1)],
+            ["Kick Off (Start)", "Kick Off (After Goal)"],
+        )
+        self.assertEqual(
+            len(inventory.candidates_for_half(1, kickoff_type="opening")), 1,
+        )
+        self.assertEqual(
+            len(inventory.candidates_for_half(1, kickoff_type="after_goal")), 1,
+        )
+
+    def test_opening_wrapper_still_excludes_after_goal_kickoffs(self):
+        inventory = extract_opening_kickoff_candidates([
+            event(start=105, end=115, tag_type="Kick Off (After Goal)"),
+            event(start=125, end=135, tag_type="Kick Off (Start)"),
+        ], timeline=timeline())
+        self.assertEqual(len(inventory.candidates_for_half(1)), 1)
+        self.assertEqual(inventory.candidates_for_half(1)[0].type_value, "Kick Off (Start)")
 
 
 if __name__ == "__main__":
