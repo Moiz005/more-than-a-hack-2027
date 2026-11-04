@@ -22,6 +22,10 @@ overlay requires a future run with a confirmed second-half kickoff and the same
 policy/invariant checks; no fixed frame or manually observed timestamp is an
 acceptable substitute.
 
+The audit-estimate extension may report a strongest movement frame inside the
+Smart Tag interval for manual inspection. This estimate is explicitly not an
+exact execution confirmation and cannot modify labels.
+
 ## Ablation and local run evidence
 
 All rows below are engineering facts from ignored local artifacts. They are not
@@ -139,3 +143,10 @@ rejected by the boundary policy; only `CONFIRMED` exact contiguous motion is
 overlayable. Synthetic tests cover this distinction and preserve the earlier
 missing-ball and player-only negative cases. No target-match frame labels or
 public evaluation score were used to select these engineering hypotheses.
+
+The audit-estimate pass adds a separate `ESTIMATED_FRAME` result when
+persistent plausible ball motion is observed inside the Smart Tag interval but
+strict setup evidence is insufficient. The tactical-only audit produced local
+manual-check estimates of `00:07:27.5` (first half, frame 11188) and
+`01:15:46.4` (second half, frame 113660). Both remain audit-only; the policy
+reported zero label changes and did not write an overlay submission.

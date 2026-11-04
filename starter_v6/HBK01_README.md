@@ -25,6 +25,12 @@ never eligible for overlay; only an exact, contiguous `CONFIRMED` result can
 change labels. Player proximity, center-circle occupancy, and player motion
 are supporting evidence and cannot confirm a kickoff by themselves.
 
+When persistent plausible ball motion occurs inside the five-second Smart Tag
+interval but strict centre setup is unavailable, audit mode reports
+`ESTIMATED_FRAME` with `best_estimate_frame` and a video-relative timestamp.
+This is intended for manual video inspection only. It is never used by the
+overlay policy or converted into a submission label.
+
 The first-half result is diagnostic only. A rejected or ambiguous second-half
 result leaves the parent labels unchanged and causes `overlay` to exit with an
 error without writing the requested submission.

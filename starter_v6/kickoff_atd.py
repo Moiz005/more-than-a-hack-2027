@@ -20,6 +20,7 @@ from starter_v6.kickoff_tags import KickoffTagCandidate, MISSING_TAG
 CONFIRMED = "CONFIRMED"
 CONFIRMED_EXACT = CONFIRMED
 BOUNDED_INTERVAL = "BOUNDED_INTERVAL"
+ESTIMATED_FRAME = "ESTIMATED_FRAME"
 AMBIGUOUS = "AMBIGUOUS"
 INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 INVALID_ALIGNMENT = "INVALID_ALIGNMENT"
@@ -28,6 +29,7 @@ SEARCHING = "SEARCHING"
 SETUP = "SETUP"
 ARMED = "ARMED"
 EXECUTED = "EXECUTED"
+ESTIMATE = "ESTIMATE"
 
 
 @dataclass(frozen=True)
@@ -133,6 +135,11 @@ class KickoffDetectionResult:
     evidence_state: str = SEARCHING
     execution_interval: Optional[Tuple[int, int]] = None
     trace: Optional[KickoffEvidenceTrace] = None
+    best_estimate_frame: Optional[int] = None
+    best_estimate_timestamp_seconds: Optional[float] = None
+    best_estimate_score: Optional[float] = None
+    best_estimate_evidence: Tuple[str, ...] = ()
+    best_estimate_interval: Optional[Tuple[int, int]] = None
 
 
 def distance_to_centre_m(ball: Observation, metadata: ATDMetadata) -> Optional[float]:
@@ -221,7 +228,11 @@ def _make_trace(values: dict) -> KickoffEvidenceTrace:
 def _result(status: str, reasons: Sequence[str], candidates: Sequence[KickoffExecutionCandidate],
             evaluated_frames: int, fps: int, trace: Optional[KickoffEvidenceTrace] = None,
             evidence_state: str = SEARCHING,
-            execution_interval: Optional[Tuple[int, int]] = None) -> KickoffDetectionResult:
+            execution_interval: Optional[Tuple[int, int]] = None,
+            best_estimate_frame: Optional[int] = None,
+            best_estimate_score: Optional[float] = None,
+            best_estimate_evidence: Sequence[str] = (),
+            best_estimate_interval: Optional[Tuple[int, int]] = None) -> KickoffDetectionResult:
     unique_reasons = tuple(dict.fromkeys(reasons))
     ordered_candidates = tuple(candidates)
     execution_frame = ordered_candidates[0].execution_frame if status == CONFIRMED else None
@@ -236,6 +247,13 @@ def _result(status: str, reasons: Sequence[str], candidates: Sequence[KickoffExe
         evidence_state=evidence_state,
         execution_interval=execution_interval,
         trace=trace,
+        best_estimate_frame=best_estimate_frame,
+        best_estimate_timestamp_seconds=(
+            best_estimate_frame / float(fps) if best_estimate_frame is not None else None
+        ),
+        best_estimate_score=best_estimate_score,
+        best_estimate_evidence=tuple(best_estimate_evidence),
+        best_estimate_interval=best_estimate_interval,
     )
 
 
@@ -288,6 +306,9 @@ def detect_kickoff_execution(
     bounded_interval: Optional[Tuple[int, int]] = None
     prepared_before_gap = False
     gap_motion_run = 0
+    estimate_run_start: Optional[int] = None
+    estimate_run_length = 0
+    best_estimate: Optional[Tuple[float, int, Tuple[str, ...], Optional[Tuple[int, int]]]] = None
 
     for raw in frames:
         try:
@@ -319,6 +340,8 @@ def detect_kickoff_execution(
             trace_values["center_run"] = 0
             prepared_before_gap = len(stable_positions) >= config.stable_preparation_frames
             gap_motion_run = 0
+            estimate_run_start = None
+            estimate_run_length = 0
             if invalid_position:
                 reasons.append("quality_rejected_jump")
                 trace_values["rejection_reason_counts"]["quality_rejected_jump"] = trace_values["rejection_reason_counts"].get("quality_rejected_jump", 0) + 1
@@ -408,6 +431,48 @@ def detect_kickoff_execution(
         if (bounded_interval is None and gap_motion_run >= config.movement_confirmation_frames
                 and prepared_before_gap):
             bounded_interval = (frame_number - gap_motion_run, frame_number)
+
+        tag_frame = bool(
+            candidate.start_frame is not None and candidate.end_frame is not None
+            and candidate.start_frame <= frame_number < candidate.end_frame
+        )
+        if tag_frame and plausible_motion and consecutive:
+            if estimate_run_start is None or frame_number != previous_evaluated + 1:
+                estimate_run_start = frame_number
+                estimate_run_length = 1
+            else:
+                estimate_run_length += 1
+            if estimate_run_length >= config.movement_confirmation_frames:
+                estimate_frame = estimate_run_start
+                estimate_evidence = ["tag_window", "persistent_ball_motion"]
+                estimate_score = 1.0 + 0.25 * (estimate_run_length - 1)
+                if stable_positions or trace_values["center_ball_frames"]:
+                    estimate_evidence.append("centre_setup_support")
+                    estimate_score += 0.25
+                if _nearby_player(raw, ball_xy, metadata, config.nearby_player_radius_m):
+                    estimate_evidence.append("nearby_player")
+                    estimate_score += 0.25
+                estimate = (
+                    estimate_score, estimate_frame, tuple(estimate_evidence), None,
+                )
+                if (best_estimate is None
+                        or estimate[0] > best_estimate[0]
+                        or (estimate[0] == best_estimate[0] and estimate[1] < best_estimate[1])):
+                    best_estimate = estimate
+        elif not tag_frame or not plausible_motion:
+            estimate_run_start = None
+            estimate_run_length = 0
+
+        if tag_frame and gap_motion and gap_motion_run >= config.movement_confirmation_frames:
+            gap_start = last_observed_frame + 1 if last_observed_frame is not None else frame_number
+            gap_estimate = (
+                0.75, frame_number, ("tag_window", "gap_aware_motion"),
+                (gap_start, frame_number),
+            )
+            if (best_estimate is None
+                    or gap_estimate[0] > best_estimate[0]
+                    or (gap_estimate[0] == best_estimate[0] and gap_estimate[1] < best_estimate[1])):
+                best_estimate = gap_estimate
 
         prepared_before = len(stable_positions) >= config.stable_preparation_frames
         if pending_frame is not None:
@@ -508,18 +573,45 @@ def detect_kickoff_execution(
     if len(candidates) > 1:
         reasons.append("multiple_motion_candidates")
         trace = _make_trace(trace_values)
-        return _result(AMBIGUOUS, reasons, candidates, evaluated, config.fps, trace)
+        return _result(
+            AMBIGUOUS, reasons, candidates, evaluated, config.fps, trace,
+            best_estimate_frame=best_estimate[1] if best_estimate else None,
+            best_estimate_score=best_estimate[0] if best_estimate else None,
+            best_estimate_evidence=best_estimate[2] if best_estimate else (),
+            best_estimate_interval=best_estimate[3] if best_estimate else None,
+        )
     if len(candidates) == 1:
         trace = _make_trace(trace_values)
-        return _result(CONFIRMED, reasons, candidates, evaluated, config.fps, trace,
-                       evidence_state=EXECUTED)
+        exact_frame = candidates[0].execution_frame
+        return _result(
+            CONFIRMED, reasons, candidates, evaluated, config.fps, trace,
+            evidence_state=EXECUTED, best_estimate_frame=exact_frame,
+            best_estimate_score=best_estimate[0] if best_estimate else None,
+            best_estimate_evidence=best_estimate[2] if best_estimate else (),
+            best_estimate_interval=best_estimate[3] if best_estimate else None,
+        )
     if not reasons:
         reasons.append("insufficient_evidence")
     trace = _make_trace(trace_values)
     if bounded_interval is not None:
         reasons.append("gap_bounded_motion")
-        return _result(BOUNDED_INTERVAL, reasons, candidates, evaluated, config.fps, trace,
-                       evidence_state=ARMED, execution_interval=bounded_interval)
+        return _result(
+            BOUNDED_INTERVAL, reasons, candidates, evaluated, config.fps, trace,
+            evidence_state=ARMED, execution_interval=bounded_interval,
+            best_estimate_frame=best_estimate[1] if best_estimate else None,
+            best_estimate_score=best_estimate[0] if best_estimate else None,
+            best_estimate_evidence=best_estimate[2] if best_estimate else (),
+            best_estimate_interval=best_estimate[3] if best_estimate else bounded_interval,
+        )
+    if best_estimate is not None:
+        reasons.append("audit_estimate_available")
+        return _result(
+            ESTIMATED_FRAME, reasons, candidates, evaluated, config.fps, trace,
+            evidence_state=ESTIMATE, best_estimate_frame=best_estimate[1],
+            best_estimate_score=best_estimate[0],
+            best_estimate_evidence=best_estimate[2],
+            best_estimate_interval=best_estimate[3],
+        )
     state = SETUP if trace.center_ball_frames else SEARCHING
     return _result(INSUFFICIENT_EVIDENCE, reasons, candidates, evaluated, config.fps, trace,
                    evidence_state=state)
@@ -531,6 +623,8 @@ __all__ = [
     "CONFIRMED",
     "CONFIRMED_EXACT",
     "EXECUTED",
+    "ESTIMATE",
+    "ESTIMATED_FRAME",
     "INSUFFICIENT_EVIDENCE",
     "INVALID_ALIGNMENT",
     "KickoffATDConfig",

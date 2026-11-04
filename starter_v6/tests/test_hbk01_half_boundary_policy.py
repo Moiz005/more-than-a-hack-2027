@@ -15,6 +15,7 @@ from starter_v6.half_boundary_policy import (
 from starter_v6.kickoff_atd import (
     AMBIGUOUS,
     CONFIRMED,
+    ESTIMATED_FRAME,
     INSUFFICIENT_EVIDENCE,
     KickoffDetectionResult,
 )
@@ -105,7 +106,7 @@ class HalfBoundaryPolicyTests(unittest.TestCase):
         self.assertEqual(output.changed_frames, ())
 
     def test_ambiguous_or_missing_detection_fails_closed(self):
-        for detection in (result(AMBIGUOUS), result(INSUFFICIENT_EVIDENCE)):
+        for detection in (result(AMBIGUOUS), result(INSUFFICIENT_EVIDENCE), result(ESTIMATED_FRAME)):
             output = apply_kickoff_prefix(
                 self.base, self.timeline, {2: detection}, mode=OVERLAY,
             )

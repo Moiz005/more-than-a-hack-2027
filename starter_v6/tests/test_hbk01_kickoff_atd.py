@@ -10,6 +10,7 @@ from starter_v6.kickoff_atd import (
     BOUNDED_INTERVAL,
     CONFIRMED,
     EXECUTED,
+    ESTIMATED_FRAME,
     INSUFFICIENT_EVIDENCE,
     INVALID_ALIGNMENT,
     KickoffATDConfig,
@@ -287,6 +288,33 @@ class KickoffATDTests(unittest.TestCase):
         self.assertIsNone(result.execution_frame)
         self.assertIsNotNone(result.execution_interval)
         self.assertIn("gap_bounded_motion", result.reasons)
+
+    def test_persistent_motion_inside_tag_returns_audit_estimate_without_setup(self):
+        rows = [
+            frame(0, ball_x=0.70, speed_valid=False),
+            frame(1, ball_x=0.70, speed_valid=False),
+            frame(2, ball_x=0.706, speed_valid=False),
+            frame(3, ball_x=0.712, speed_valid=False),
+        ]
+        result = detect_kickoff_execution(
+            rows, METADATA, candidate(0, 4), timeline=timeline(),
+        )
+        self.assertEqual(result.status, ESTIMATED_FRAME)
+        self.assertIsNone(result.execution_frame)
+        self.assertEqual(result.best_estimate_frame, 2)
+        self.assertAlmostEqual(result.best_estimate_timestamp_seconds, 2 / 25.0)
+        self.assertIn("tag_window", result.best_estimate_evidence)
+        self.assertIn("persistent_ball_motion", result.best_estimate_evidence)
+
+    def test_motion_outside_tag_does_not_create_audit_estimate(self):
+        rows = [
+            frame(0, ball_x=0.50), frame(1, ball_x=0.506, speed_valid=False),
+            frame(2, ball_x=0.512, speed_valid=False), frame(3, ball_x=0.512),
+        ]
+        result = detect_kickoff_execution(
+            rows, METADATA, candidate(3, 4), timeline=timeline(),
+        )
+        self.assertIsNone(result.best_estimate_frame)
 
 
 if __name__ == "__main__":
