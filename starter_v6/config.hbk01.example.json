@@ -1,0 +1,23 @@
+{
+  "parent_config": "starter_v6/config.example.json",
+  "mode": "audit",
+  "source": "tactical",
+  "data_dir": null,
+  "run_id": "manual-run",
+  "output": "submission.csv",
+  "diagnostics": "diagnostics.json",
+  "metadata": "run_metadata.json",
+  "detector": {
+    "fps": 25,
+    "centre_setup_radius_m": 2.5,
+    "stationary_jitter_m": 0.2,
+    "stationary_max_speed_mps": 0.75,
+    "stable_preparation_frames": 3,
+    "min_movement_displacement_m": 0.2,
+    "max_movement_speed_mps": 35.0,
+    "max_provider_speed_error_mps": 12.0,
+    "movement_confirmation_frames": 2,
+    "nearby_player_radius_m": 3.0,
+    "max_confirmed_candidates": 8
+  }
+}

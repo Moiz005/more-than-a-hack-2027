@@ -1,0 +1,51 @@
+# HBK-01 half-boundary runner
+
+This is an isolated, opt-in experiment layer on top of the verified
+`starter_v6.run_e04` runner. It does not copy the E04 data loaders, possession
+inference, HMM, or restart detector.
+
+All inputs are tactical. The command never downloads data. Licensed match
+assets and frame-specific diagnostics must remain local under the ignored
+`.local-checkpoints/` tree.
+
+## Modes
+
+- `off`: run the canonical E04 parent and copy its CSV bytes unchanged.
+- `audit`: run E04 and report both opening-kickoff tag windows, ATD detector
+  statuses, timestamps, and the hypothetical second-half prefix. No submission
+  CSV is written.
+- `overlay`: run E04 and write a modified CSV only when the second-half ATD
+  detector returns `CONFIRMED`; the Phase 4 policy changes only
+  `[second_half_graded_start, kickoff_execution_frame)` to `D`.
+
+The first-half result is diagnostic only. A rejected or ambiguous second-half
+result leaves the parent labels unchanged and causes `overlay` to exit with an
+error without writing the requested submission.
+
+## Invocation
+
+Run from the repository root with a unique run ID:
+
+```bash
+python -m starter_v6.run_half_boundaries --config starter_v6/config.hbk01.example.json \
+  --mode off --run-id off-001
+python -m starter_v6.run_half_boundaries --config starter_v6/config.hbk01.example.json \
+  --mode audit --run-id audit-001
+python -m starter_v6.run_half_boundaries --config starter_v6/config.hbk01.example.json \
+  --mode overlay --run-id overlay-001
+```
+
+Artifacts are written to `.local-checkpoints/hbk01/<run-id>/` and are refused
+if they already exist unless `--overwrite` is explicitly supplied. The config's
+`output`, `diagnostics`, and `metadata` values are filenames or subpaths below
+that run directory. `parent_config` is resolved from the repository root and
+must be a tactical E04 configuration.
+
+Use `--data-dir <path>` to point at locally available licensed assets. If the
+assets are absent, the runner reports the missing local inputs and does not
+download replacements. `--self-check` exercises the policy plumbing with
+invented data and requires no match assets.
+
+The metadata captures the parent commit/config hash, HBK-01 config/source
+hashes, tactical input identifiers, runtime, Python version, selected mode,
+and output hash. These records are local provenance, not accuracy evidence.
