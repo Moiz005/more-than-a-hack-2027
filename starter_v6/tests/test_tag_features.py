@@ -13,7 +13,10 @@ def event(code, start, end, team=None, tag_type=None):
         tags["Team"] = team
     if tag_type is not None:
         tags["Type"] = tag_type
-    return SmartTagEvent(code, start / 25, end / 25, start, end, tags, None, team)
+    if tag_type is not None:
+        tags["Half"] = "1st Half"
+    return SmartTagEvent(code, start / 25, end / 25, start, end, tags,
+                         None if team in (None, "N/A") else ("H" if team == "Barcelona" else "A"), team)
 
 
 class TagFeatureTests(unittest.TestCase):
@@ -28,6 +31,44 @@ class TagFeatureTests(unittest.TestCase):
         self.assertIsNone(rows[2].team_prior)
         self.assertTrue(rows[2].restart_context)
         self.assertEqual(rows[3].team_prior, None)
+        self.assertEqual(rows[2].source_teams, ("N/A",))
+        self.assertEqual(rows[2].restart_types, ("throw-in",))
+        self.assertEqual(rows[2].half_values, ("1st Half",))
+        self.assertEqual(rows[2].interval, (2, 3))
+        self.assertIn("TAG:SET PIECES", rows[2].provenance)
+
+    def test_all_six_restart_types_are_context_only_and_preserved(self):
+        restart_types = ("Throw-in", "Corner Kick", "Goal Kick", "Free Kick",
+                         "Kick Off (After Goal)", "Kick Off (Start)")
+        events = [event("SET PIECES", i, i + 1, "N/A", restart_type)
+                  for i, restart_type in enumerate(restart_types)]
+        rows = iter_tag_evidence(events, 7)
+        self.assertEqual(tuple(row.restart_types[0] for row in rows[:6]),
+                         ("throw-in", "corner kick", "goal kick", "free kick",
+                          "kick off (after goal)", "kick off (start)"))
+        self.assertTrue(all(row.team_prior is None and row.restart_context for row in rows[:6]))
+        self.assertTrue(all(row.interval is not None and row.provenance for row in rows[:6]))
+
+    def test_overlap_group_is_stable_and_duplicate_context_is_capped(self):
+        first = event("SET PIECES", 0, 3, "Barcelona", "Corner Kick")
+        duplicate = event("SET PIECES", 0, 3, "Barcelona", "Corner Kick")
+        rows = iter_tag_evidence([first, duplicate], 3)
+        self.assertTrue(rows[1].overlap)
+        self.assertTrue(rows[1].capped)
+        self.assertEqual(rows[1].home_prior, 1.0)
+        self.assertEqual(len(rows[1].overlap_group_id.split("|")), 1)
+
+    def test_competing_restart_teams_are_unknown_and_half_is_metadata_only(self):
+        rows = iter_tag_evidence([
+            event("SET PIECES", 0, 2, "Barcelona", "Corner Kick"),
+            event("SET PIECES", 0, 2, "Athletic Club", "Goal Kick"),
+        ], 2)
+        self.assertTrue(rows[0].team_conflict)
+        self.assertIsNone(rows[0].team_prior)
+        self.assertEqual(rows[0].home_prior, 0.0)
+        self.assertEqual(rows[0].away_prior, 0.0)
+        self.assertEqual(rows[0].half_values, ("1st Half",))
+        self.assertEqual(len(rows[0].restart_types), 2)
 
     def test_overlap_is_capped_and_conflict_is_flagged(self):
         rows = list(iter_tag_evidence([

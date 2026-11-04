@@ -47,6 +47,12 @@ class TagEvidence:
     capped: bool = False
     unknown_codes: Tuple[str, ...] = ()
     families: Tuple[str, ...] = ()
+    restart_types: Tuple[str, ...] = ()
+    source_teams: Tuple[Optional[str], ...] = ()
+    half_values: Tuple[str, ...] = ()
+    interval: Optional[Tuple[int, int]] = None
+    overlap_group_id: Optional[str] = None
+    provenance: Tuple[str, ...] = ()
 
 
 def _norm(value: Optional[str]) -> str:
@@ -90,6 +96,9 @@ def iter_tag_evidence(events: Iterable[SmartTagEvent], frame_count: int) -> List
         unknown_codes = set()
         teams = set()
         restart_types = set()
+        source_teams = set()
+        half_values = set()
+        provenance = set()
         for item in active:
             code = " ".join(item.code.upper().split())
             family = FAMILY_BY_CODE.get(code)
@@ -97,6 +106,11 @@ def iter_tag_evidence(events: Iterable[SmartTagEvent], frame_count: int) -> List
                 unknown_codes.add(code)
                 continue
             families.add(family)
+            provenance.add("TAG:" + code)
+            half_value = item.tags.get("Half")
+            if half_value:
+                half_values.add(" ".join(half_value.split()))
+            source_teams.add(item.team_raw)
             if family in {"attacking_phase", "attacking_context", "restart", "goal_context"}:
                 team = _team(item.tags.get("Team"))
                 if team:
@@ -110,6 +124,11 @@ def iter_tag_evidence(events: Iterable[SmartTagEvent], frame_count: int) -> List
         home = 0.0 if conflict else float("H" in teams)
         away = 0.0 if conflict else float("A" in teams)
         team_prior = next(iter(teams)) if len(teams) == 1 else None
+        active_ids = sorted({
+            "{}:{}:{}:{}".format(item.code, item.start_frame, item.end_frame,
+                                  item.tags.get("Type", ""))
+            for item in active
+        })
         output.append(TagEvidence(
             active=True,
             team_prior=team_prior,
@@ -123,5 +142,12 @@ def iter_tag_evidence(events: Iterable[SmartTagEvent], frame_count: int) -> List
             capped=len(active) > 1 and bool(teams),
             unknown_codes=tuple(sorted(unknown_codes)),
             families=tuple(sorted(families)),
+            restart_types=tuple(sorted(restart_types)),
+            source_teams=tuple(sorted(source_teams, key=lambda value: value or "")),
+            half_values=tuple(sorted(half_values)),
+            interval=(min(item.start_frame for item in active),
+                      max(item.end_frame for item in active)),
+            overlap_group_id="|".join(active_ids) if len(active_ids) > 1 else (active_ids[0] if active_ids else None),
+            provenance=tuple(sorted(provenance)),
         ))
     return output

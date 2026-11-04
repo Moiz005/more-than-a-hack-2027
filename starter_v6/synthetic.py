@@ -312,6 +312,12 @@ def _tag_dict(tag: TagEvidence) -> Dict[str, object]:
         "team_conflict": tag.team_conflict,
         "overlap": tag.overlap,
         "families": list(tag.families),
+        "restart_types": list(tag.restart_types),
+        "source_teams": list(tag.source_teams),
+        "half_values": list(tag.half_values),
+        "interval": list(tag.interval) if tag.interval is not None else None,
+        "overlap_group_id": tag.overlap_group_id,
+        "provenance": list(tag.provenance),
     }
 
 
