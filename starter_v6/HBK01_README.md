@@ -12,11 +12,18 @@ assets and frame-specific diagnostics must remain local under the ignored
 
 - `off`: run the canonical E04 parent and copy its CSV bytes unchanged.
 - `audit`: run E04 and report both opening-kickoff tag windows, ATD detector
-  statuses, timestamps, and the hypothetical second-half prefix. No submission
-  CSV is written.
+  statuses, timestamps, aggregate ATD evidence, and the hypothetical
+  second-half prefix. No submission CSV is written. Diagnostics include only
+  aggregate, non-reconstructive evidence counts; they do not export frame rows.
 - `overlay`: run E04 and write a modified CSV only when the second-half ATD
   detector returns `CONFIRMED`; the Phase 4 policy changes only
   `[second_half_graded_start, kickoff_execution_frame)` to `D`.
+
+The detector treats a short missing-ball interval as a bounded execution
+interval only when subsequent motion is corroborated. `BOUNDED_INTERVAL` is
+never eligible for overlay; only an exact, contiguous `CONFIRMED` result can
+change labels. Player proximity, center-circle occupancy, and player motion
+are supporting evidence and cannot confirm a kickoff by themselves.
 
 The first-half result is diagnostic only. A rejected or ambiguous second-half
 result leaves the parent labels unchanged and causes `overlay` to exit with an

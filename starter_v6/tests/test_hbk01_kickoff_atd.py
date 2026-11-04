@@ -6,7 +6,10 @@ from starter_v6.ingestion import ATDFrame, ATDMetadata, Observation, TrackSlot
 from starter_v6.timeline import TacticalTimeline
 from starter_v6.kickoff_atd import (
     AMBIGUOUS,
+    ARMED,
+    BOUNDED_INTERVAL,
     CONFIRMED,
+    EXECUTED,
     INSUFFICIENT_EVIDENCE,
     INVALID_ALIGNMENT,
     KickoffATDConfig,
@@ -257,6 +260,33 @@ class KickoffATDTests(unittest.TestCase):
         before = tuple(rows)
         detect_kickoff_execution(rows, METADATA, candidate(0, 5), timeline=timeline())
         self.assertEqual(tuple(rows), before)
+
+    def test_result_contains_aggregate_trace_without_frame_payload(self):
+        result = detect_kickoff_execution(
+            setup_and_kick(), METADATA, candidate(0, 5), timeline=timeline(),
+        )
+        self.assertIsNotNone(result.trace)
+        self.assertEqual(result.trace.evaluated_frames, 5)
+        self.assertEqual(result.trace.ball_observed_frames, 5)
+        self.assertGreaterEqual(result.trace.center_ball_frames, 3)
+        self.assertGreaterEqual(result.trace.nearby_player_frames, 1)
+        self.assertEqual(result.evidence_state, EXECUTED)
+        self.assertNotIn("frames", result.trace.as_dict())
+
+    def test_short_missing_ball_gap_is_bounded_not_exact(self):
+        rows = [frame(0), frame(1), frame(2), frame(3, ball_valid=False),
+                frame(4, ball_x=0.506, speed_valid=False),
+                frame(5, ball_x=0.512, speed_valid=False),
+                frame(6, ball_x=0.518, speed_valid=False)]
+        result = detect_kickoff_execution(
+            rows, METADATA, candidate(0, 7), timeline=timeline(),
+            config=KickoffATDConfig(min_movement_displacement_m=0.2),
+        )
+        self.assertEqual(result.status, BOUNDED_INTERVAL)
+        self.assertEqual(result.evidence_state, ARMED)
+        self.assertIsNone(result.execution_frame)
+        self.assertIsNotNone(result.execution_interval)
+        self.assertIn("gap_bounded_motion", result.reasons)
 
 
 if __name__ == "__main__":

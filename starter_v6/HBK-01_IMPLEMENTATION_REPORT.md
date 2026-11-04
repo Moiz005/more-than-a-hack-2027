@@ -128,3 +128,14 @@ This report does not authorize public submission, external upload, threshold
 tuning, or a future overlay. Any future change must preserve `starter_v6` as
 the canonical directory and rerun the synthetic, regression, provenance,
 validator, and fail-closed checks.
+
+## Evidence-recovery extension
+
+The post-release evidence-recovery work remains fail-closed and tactical-only.
+It adds aggregate diagnostics for ball visibility, center-circle setup,
+nearby-player support, player motion, contiguous motion, and short missing-ball
+gaps. A gap can produce `BOUNDED_INTERVAL`, but that status is deliberately
+rejected by the boundary policy; only `CONFIRMED` exact contiguous motion is
+overlayable. Synthetic tests cover this distinction and preserve the earlier
+missing-ball and player-only negative cases. No target-match frame labels or
+public evaluation score were used to select these engineering hypotheses.

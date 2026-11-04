@@ -18,9 +18,16 @@ from starter_v6.kickoff_tags import KickoffTagCandidate, MISSING_TAG
 
 
 CONFIRMED = "CONFIRMED"
+CONFIRMED_EXACT = CONFIRMED
+BOUNDED_INTERVAL = "BOUNDED_INTERVAL"
 AMBIGUOUS = "AMBIGUOUS"
 INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
 INVALID_ALIGNMENT = "INVALID_ALIGNMENT"
+
+SEARCHING = "SEARCHING"
+SETUP = "SETUP"
+ARMED = "ARMED"
+EXECUTED = "EXECUTED"
 
 
 @dataclass(frozen=True)
@@ -42,6 +49,7 @@ class KickoffATDConfig:
     max_provider_speed_error_mps: float = 12.0
     movement_confirmation_frames: int = 2
     nearby_player_radius_m: float = 3.0
+    max_ball_gap_frames: int = 2
     max_confirmed_candidates: int = 8
 
     def __post_init__(self) -> None:
@@ -57,7 +65,7 @@ class KickoffATDConfig:
             if (isinstance(value, bool) or not isinstance(value, (int, float))
                     or not math.isfinite(value) or value <= 0):
                 raise ValueError("{} must be finite and positive".format(name))
-        for name in ("stable_preparation_frames", "movement_confirmation_frames", "max_confirmed_candidates"):
+        for name in ("stable_preparation_frames", "movement_confirmation_frames", "max_ball_gap_frames", "max_confirmed_candidates"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError("{} must be a positive integer".format(name))
@@ -77,6 +85,42 @@ class KickoffExecutionCandidate:
 
 
 @dataclass(frozen=True)
+class KickoffEvidenceTrace:
+    """Aggregate, non-reconstructive evidence for one kickoff search window."""
+
+    evaluated_frames: int
+    ball_observed_frames: int
+    ball_missing_frames: int
+    longest_observed_run: int
+    center_ball_frames: int
+    longest_center_run: int
+    plausible_motion_frames: int
+    gap_aware_motion_frames: int
+    nearby_player_frames: int
+    center_player_frames: int
+    moving_player_frames: int
+    state_counts: Tuple[Tuple[str, int], ...]
+    rejection_reason_counts: Tuple[Tuple[str, int], ...]
+
+    def as_dict(self) -> dict:
+        return {
+            "evaluated_frames": self.evaluated_frames,
+            "ball_observed_frames": self.ball_observed_frames,
+            "ball_missing_frames": self.ball_missing_frames,
+            "longest_observed_run": self.longest_observed_run,
+            "center_ball_frames": self.center_ball_frames,
+            "longest_center_run": self.longest_center_run,
+            "plausible_motion_frames": self.plausible_motion_frames,
+            "gap_aware_motion_frames": self.gap_aware_motion_frames,
+            "nearby_player_frames": self.nearby_player_frames,
+            "center_player_frames": self.center_player_frames,
+            "moving_player_frames": self.moving_player_frames,
+            "state_counts": dict(self.state_counts),
+            "rejection_reason_counts": dict(self.rejection_reason_counts),
+        }
+
+
+@dataclass(frozen=True)
 class KickoffDetectionResult:
     """Auditable detector result; execution is present only when unambiguous."""
 
@@ -86,6 +130,9 @@ class KickoffDetectionResult:
     reasons: Tuple[str, ...]
     candidates: Tuple[KickoffExecutionCandidate, ...]
     evaluated_frames: int
+    evidence_state: str = SEARCHING
+    execution_interval: Optional[Tuple[int, int]] = None
+    trace: Optional[KickoffEvidenceTrace] = None
 
 
 def distance_to_centre_m(ball: Observation, metadata: ATDMetadata) -> Optional[float]:
@@ -130,8 +177,51 @@ def _nearby_player(frame: ATDFrame, ball_xy: Tuple[float, float], metadata: ATDM
     return False
 
 
+def _valid_player_positions(frame: ATDFrame, metadata: ATDMetadata) -> List[Tuple[float, float]]:
+    return [
+        (observation.x_m, observation.y_m)
+        for observation in frame.players
+        if observation.valid
+        and all(math.isfinite(value) for value in (observation.x_m, observation.y_m))
+        and 0.0 <= observation.x_m <= metadata.pitch_length_m
+        and 0.0 <= observation.y_m <= metadata.pitch_width_m
+    ]
+
+
+def _empty_trace() -> dict:
+    return {
+        "evaluated_frames": 0, "ball_observed_frames": 0, "ball_missing_frames": 0,
+        "longest_observed_run": 0, "observed_run": 0, "center_ball_frames": 0,
+        "center_run": 0, "longest_center_run": 0, "plausible_motion_frames": 0,
+        "gap_aware_motion_frames": 0, "nearby_player_frames": 0,
+        "center_player_frames": 0, "moving_player_frames": 0,
+        "state_counts": {SEARCHING: 0, SETUP: 0, ARMED: 0, EXECUTED: 0},
+        "rejection_reason_counts": {},
+    }
+
+
+def _make_trace(values: dict) -> KickoffEvidenceTrace:
+    return KickoffEvidenceTrace(
+        evaluated_frames=values["evaluated_frames"],
+        ball_observed_frames=values["ball_observed_frames"],
+        ball_missing_frames=values["ball_missing_frames"],
+        longest_observed_run=values["longest_observed_run"],
+        center_ball_frames=values["center_ball_frames"],
+        longest_center_run=values["longest_center_run"],
+        plausible_motion_frames=values["plausible_motion_frames"],
+        gap_aware_motion_frames=values["gap_aware_motion_frames"],
+        nearby_player_frames=values["nearby_player_frames"],
+        center_player_frames=values["center_player_frames"],
+        moving_player_frames=values["moving_player_frames"],
+        state_counts=tuple(sorted(values["state_counts"].items())),
+        rejection_reason_counts=tuple(sorted(values["rejection_reason_counts"].items())),
+    )
+
+
 def _result(status: str, reasons: Sequence[str], candidates: Sequence[KickoffExecutionCandidate],
-            evaluated_frames: int, fps: int) -> KickoffDetectionResult:
+            evaluated_frames: int, fps: int, trace: Optional[KickoffEvidenceTrace] = None,
+            evidence_state: str = SEARCHING,
+            execution_interval: Optional[Tuple[int, int]] = None) -> KickoffDetectionResult:
     unique_reasons = tuple(dict.fromkeys(reasons))
     ordered_candidates = tuple(candidates)
     execution_frame = ordered_candidates[0].execution_frame if status == CONFIRMED else None
@@ -143,6 +233,9 @@ def _result(status: str, reasons: Sequence[str], candidates: Sequence[KickoffExe
         reasons=unique_reasons,
         candidates=ordered_candidates,
         evaluated_frames=evaluated_frames,
+        evidence_state=evidence_state,
+        execution_interval=execution_interval,
+        trace=trace,
     )
 
 
@@ -188,6 +281,13 @@ def detect_kickoff_execution(
     pending_displacement: Optional[float] = None
     pending_speed: Optional[float] = None
     pending_provider_speed: Optional[float] = None
+    trace_values = _empty_trace()
+    last_observed_frame: Optional[int] = None
+    last_observed_xy: Optional[Tuple[float, float]] = None
+    previous_player_positions: Optional[List[Tuple[float, float]]] = None
+    bounded_interval: Optional[Tuple[int, int]] = None
+    prepared_before_gap = False
+    gap_motion_run = 0
 
     for raw in frames:
         try:
@@ -211,12 +311,20 @@ def detect_kickoff_execution(
                 return _result(INVALID_ALIGNMENT, reasons + ["invalid_alignment"], candidates, evaluated, config.fps)
 
         evaluated += 1
+        trace_values["evaluated_frames"] += 1
         ball_xy, invalid_position = _observed_ball(raw.ball, metadata)
         if ball_xy is None:
+            trace_values["ball_missing_frames"] += 1
+            trace_values["observed_run"] = 0
+            trace_values["center_run"] = 0
+            prepared_before_gap = len(stable_positions) >= config.stable_preparation_frames
+            gap_motion_run = 0
             if invalid_position:
                 reasons.append("quality_rejected_jump")
+                trace_values["rejection_reason_counts"]["quality_rejected_jump"] = trace_values["rejection_reason_counts"].get("quality_rejected_jump", 0) + 1
             else:
                 reasons.append("ball_missing")
+                trace_values["rejection_reason_counts"]["ball_missing"] = trace_values["rejection_reason_counts"].get("ball_missing", 0) + 1
             stable_positions = []
             pending_frame = None
             pending_run = 0
@@ -224,7 +332,29 @@ def detect_kickoff_execution(
             previous_xy = None
             previous_frame = raw
             previous_evaluated = frame_number
+            previous_player_positions = _valid_player_positions(raw, metadata)
             continue
+
+        trace_values["ball_observed_frames"] += 1
+        trace_values["observed_run"] += 1
+        trace_values["longest_observed_run"] = max(trace_values["longest_observed_run"], trace_values["observed_run"])
+        player_positions = _valid_player_positions(raw, metadata)
+        centre_xy = (metadata.pitch_length_m / 2.0, metadata.pitch_width_m / 2.0)
+        centre_players = sum(
+            math.hypot(player[0] - centre_xy[0], player[1] - centre_xy[1]) <= config.centre_setup_radius_m
+            for player in player_positions
+        )
+        if centre_players:
+            trace_values["center_player_frames"] += 1
+        if previous_player_positions:
+            moving_players = sum(
+                any(math.hypot(player[0] - prior[0], player[1] - prior[1]) >= config.min_movement_displacement_m
+                    for prior in previous_player_positions)
+                for player in player_positions
+            )
+            if moving_players:
+                trace_values["moving_player_frames"] += 1
+        previous_player_positions = player_positions
 
         consecutive = (
             previous_evaluated is not None and frame_number == previous_evaluated + 1
@@ -232,6 +362,24 @@ def detect_kickoff_execution(
         )
         displacement = math.hypot(ball_xy[0] - previous_xy[0], ball_xy[1] - previous_xy[1]) if consecutive else None
         derived_speed = displacement * config.fps if displacement is not None else None
+        gap_frames = (
+            frame_number - last_observed_frame - 1
+            if last_observed_frame is not None else None
+        )
+        gap_displacement = (
+            math.hypot(ball_xy[0] - last_observed_xy[0], ball_xy[1] - last_observed_xy[1])
+            if last_observed_xy is not None and gap_frames is not None else None
+        )
+        gap_speed = (
+            gap_displacement * config.fps / float(gap_frames + 1)
+            if gap_displacement is not None and gap_frames is not None else None
+        )
+        gap_motion = bool(
+            gap_frames is not None and 0 < gap_frames <= config.max_ball_gap_frames
+            and gap_displacement is not None
+            and gap_displacement >= config.min_movement_displacement_m
+            and gap_speed is not None and gap_speed <= config.max_movement_speed_mps
+        )
         provider_speed = raw.ball.speed_mps if raw.ball.speed_valid and math.isfinite(raw.ball.speed_mps) else None
         plausible_motion = bool(
             displacement is not None
@@ -244,8 +392,22 @@ def detect_kickoff_execution(
                 plausible_motion = False
                 reasons.append("quality_rejected_jump")
                 reasons.append("ball_speed_contradiction")
+                trace_values["rejection_reason_counts"]["ball_speed_contradiction"] = trace_values["rejection_reason_counts"].get("ball_speed_contradiction", 0) + 1
         elif displacement is not None and derived_speed > config.max_movement_speed_mps:
             reasons.append("quality_rejected_jump")
+            trace_values["rejection_reason_counts"]["quality_rejected_jump"] = trace_values["rejection_reason_counts"].get("quality_rejected_jump", 0) + 1
+        if plausible_motion:
+            trace_values["plausible_motion_frames"] += 1
+        if gap_motion:
+            trace_values["gap_aware_motion_frames"] += 1
+            gap_motion_run = 1
+        elif plausible_motion and gap_motion_run:
+            gap_motion_run += 1
+        elif not plausible_motion:
+            gap_motion_run = 0
+        if (bounded_interval is None and gap_motion_run >= config.movement_confirmation_frames
+                and prepared_before_gap):
+            bounded_interval = (frame_number - gap_motion_run, frame_number)
 
         prepared_before = len(stable_positions) >= config.stable_preparation_frames
         if pending_frame is not None:
@@ -311,6 +473,9 @@ def detect_kickoff_execution(
             and (provider_speed is None or provider_speed <= config.stationary_max_speed_mps)
         )
         if stationary and pending_frame is None:
+            trace_values["center_ball_frames"] += 1
+            trace_values["center_run"] += 1
+            trace_values["longest_center_run"] = max(trace_values["longest_center_run"], trace_values["center_run"])
             if consecutive and stable_positions and stable_positions[-1][0] == frame_number - 1:
                 stable_positions.append((frame_number, ball_xy))
             else:
@@ -320,29 +485,61 @@ def detect_kickoff_execution(
                 reasons.append("stationary_preparation")
         elif pending_frame is None:
             stable_positions = []
+            trace_values["center_run"] = 0
+
+        nearby = bool(ball_xy and _nearby_player(raw, ball_xy, metadata, config.nearby_player_radius_m))
+        if nearby:
+            trace_values["nearby_player_frames"] += 1
+        state = SEARCHING
+        if stable_positions:
+            state = SETUP
+        if pending_frame is not None:
+            state = ARMED
+        if candidates:
+            state = EXECUTED
+        trace_values["state_counts"][state] += 1
 
         previous_xy = ball_xy
         previous_frame = raw
         previous_evaluated = frame_number
+        last_observed_frame = frame_number
+        last_observed_xy = ball_xy
 
     if len(candidates) > 1:
         reasons.append("multiple_motion_candidates")
-        return _result(AMBIGUOUS, reasons, candidates, evaluated, config.fps)
+        trace = _make_trace(trace_values)
+        return _result(AMBIGUOUS, reasons, candidates, evaluated, config.fps, trace)
     if len(candidates) == 1:
-        return _result(CONFIRMED, reasons, candidates, evaluated, config.fps)
+        trace = _make_trace(trace_values)
+        return _result(CONFIRMED, reasons, candidates, evaluated, config.fps, trace,
+                       evidence_state=EXECUTED)
     if not reasons:
         reasons.append("insufficient_evidence")
-    return _result(INSUFFICIENT_EVIDENCE, reasons, candidates, evaluated, config.fps)
+    trace = _make_trace(trace_values)
+    if bounded_interval is not None:
+        reasons.append("gap_bounded_motion")
+        return _result(BOUNDED_INTERVAL, reasons, candidates, evaluated, config.fps, trace,
+                       evidence_state=ARMED, execution_interval=bounded_interval)
+    state = SETUP if trace.center_ball_frames else SEARCHING
+    return _result(INSUFFICIENT_EVIDENCE, reasons, candidates, evaluated, config.fps, trace,
+                   evidence_state=state)
 
 
 __all__ = [
     "AMBIGUOUS",
+    "BOUNDED_INTERVAL",
     "CONFIRMED",
+    "CONFIRMED_EXACT",
+    "EXECUTED",
     "INSUFFICIENT_EVIDENCE",
     "INVALID_ALIGNMENT",
     "KickoffATDConfig",
     "KickoffDetectionResult",
     "KickoffExecutionCandidate",
+    "KickoffEvidenceTrace",
+    "ARMED",
+    "SEARCHING",
+    "SETUP",
     "distance_to_centre_m",
     "detect_kickoff_execution",
 ]

@@ -325,10 +325,13 @@ def _candidate_dict(candidate: KickoffTagCandidate) -> Dict[str, object]:
 def _detection_dict(result: KickoffDetectionResult) -> Dict[str, object]:
     return {
         "status": result.status,
+        "evidence_state": result.evidence_state,
         "execution_frame": result.execution_frame,
         "video_timestamp_seconds": result.video_timestamp_seconds,
+        "execution_interval": list(result.execution_interval) if result.execution_interval is not None else None,
         "reasons": list(result.reasons),
         "evaluated_frames": result.evaluated_frames,
+        "evidence_trace": result.trace.as_dict() if result.trace is not None else None,
         "candidates": [
             {
                 "execution_frame": item.execution_frame,
