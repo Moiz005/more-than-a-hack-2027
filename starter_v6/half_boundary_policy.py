@@ -1,10 +1,16 @@
-"""Pure, fail-closed half-boundary policy for HBK-01.
+"""Algorithmic half-boundary policy for HBK-01.
 
 This layer is intentionally downstream of the existing E04 labels.  It can
-only add a confirmed second-half pre-kickoff ``D`` prefix; it never changes
+only add a detector-supported second-half pre-kickoff ``D`` prefix; it never changes
 team ownership, first-half labels, ungraded ``X`` frames, or post-kickoff
 labels.  The returned result is suitable for an audit caller to inspect before
 any runner writes a submission.
+
+The detector does not need to produce a perfect one-to-one legal kickoff map.
+When strict confirmation is unavailable, a reproducible ``ESTIMATED_FRAME`` or
+``BOUNDED_INTERVAL`` still provides useful algorithmic boundary evidence.  The
+policy uses that evidence only when it resolves to an in-range frame; missing,
+ambiguous, and frame-less results remain rejected.
 """
 
 from __future__ import annotations
@@ -14,7 +20,12 @@ from dataclasses import dataclass
 from typing import Mapping, Optional, Sequence, Tuple
 
 from starter_v6.timeline import TacticalTimeline
-from starter_v6.kickoff_atd import CONFIRMED, KickoffDetectionResult
+from starter_v6.kickoff_atd import (
+    BOUNDED_INTERVAL,
+    CONFIRMED,
+    ESTIMATED_FRAME,
+    KickoffDetectionResult,
+)
 
 
 OVERLAY = "overlay"
@@ -127,9 +138,18 @@ def _validated_kickoff_frame(
 ) -> Tuple[Optional[int], Optional[str]]:
     if second_half_result is None:
         return None, "missing_second_half_result"
-    if second_half_result.status != CONFIRMED:
+    if second_half_result.status not in {CONFIRMED, ESTIMATED_FRAME, BOUNDED_INTERVAL}:
         return None, "second_half_status_{}".format(second_half_result.status)
-    frame = second_half_result.execution_frame
+    if second_half_result.status == CONFIRMED:
+        frame = second_half_result.execution_frame
+    elif second_half_result.best_estimate_frame is not None:
+        frame = second_half_result.best_estimate_frame
+    elif second_half_result.status == BOUNDED_INTERVAL and second_half_result.execution_interval is not None:
+        # The interval end is the first frame by which the detector has
+        # observed enough motion to bound execution without inventing a frame.
+        frame = second_half_result.execution_interval[1]
+    else:
+        return None, "missing_{}_frame".format(second_half_result.status.lower())
     if isinstance(frame, bool) or not isinstance(frame, int):
         return None, "missing_second_half_execution_frame"
     if frame == second_half_start:
@@ -187,13 +207,14 @@ def apply_kickoff_prefix(
     kickoff_results: Mapping[int, Optional[KickoffDetectionResult]],
     mode: str = OVERLAY,
 ) -> BoundaryOverlayResult:
-    """Apply or audit the confirmed second-half pre-kickoff ``D`` prefix.
+    """Apply or audit the detector-supported second-half pre-kickoff ``D`` prefix.
 
     ``kickoff_results`` is keyed by half.  The first-half result is retained as
     provenance but is never used to modify labels.  In ``overlay`` mode an
-    unconfirmed, ambiguous, missing, or out-of-range second-half result
-    returns unchanged labels with ``REJECTED`` status; callers must refuse to
-    write those labels.  The input sequence is copied and never mutated.
+    ambiguous, missing, frame-less, or out-of-range second-half result returns
+    unchanged labels with ``REJECTED`` status; estimated and bounded evidence
+    may be applied when it resolves to a valid frame.  The input sequence is
+    copied and never mutated.
     """
     if mode not in (OVERLAY, AUDIT):
         raise ValueError("mode must be 'overlay' or 'audit'")
@@ -219,7 +240,7 @@ def apply_kickoff_prefix(
     permitted_interval = (second_half_start, kickoff_frame)
     if mode == AUDIT:
         return _result(
-            mode, AUDIT_ONLY, "confirmed_second_half_prefix_audited", labels,
+            mode, AUDIT_ONLY, "detector_supported_second_half_prefix_audited", labels,
             first_half_result, second_half_result, permitted_interval,
         )
 
@@ -243,7 +264,11 @@ def apply_kickoff_prefix(
     if not all(preservation.values()):
         raise AssertionError("kickoff prefix changed labels outside its permitted interval")
     status = APPLIED if changed_frames else NO_CHANGE
-    reason = "second_half_prefix_overlaid" if changed_frames else "prefix_already_D"
+    evidence_kind = second_half_result.status.lower()
+    reason = (
+        "second_half_prefix_overlaid_{}".format(evidence_kind)
+        if changed_frames else "prefix_already_D"
+    )
     return BoundaryOverlayResult(
         mode=mode,
         status=status,

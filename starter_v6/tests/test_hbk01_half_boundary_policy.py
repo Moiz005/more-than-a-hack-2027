@@ -106,13 +106,31 @@ class HalfBoundaryPolicyTests(unittest.TestCase):
         self.assertEqual(output.changed_frames, ())
 
     def test_ambiguous_or_missing_detection_fails_closed(self):
-        for detection in (result(AMBIGUOUS), result(INSUFFICIENT_EVIDENCE), result(ESTIMATED_FRAME)):
+        for detection in (result(AMBIGUOUS), result(INSUFFICIENT_EVIDENCE)):
             output = apply_kickoff_prefix(
                 self.base, self.timeline, {2: detection}, mode=OVERLAY,
             )
             self.assertEqual(output.status, REJECTED)
             self.assertEqual(output.labels, self.base)
             self.assertEqual(output.changed_frames, ())
+
+    def test_estimated_frame_is_an_algorithmic_overlay_input(self):
+        detection = KickoffDetectionResult(
+            status=ESTIMATED_FRAME,
+            execution_frame=None,
+            video_timestamp_seconds=None,
+            reasons=("audit_estimate_available",),
+            candidates=(),
+            evaluated_frames=4,
+            best_estimate_frame=11,
+        )
+        output = apply_kickoff_prefix(
+            self.base, self.timeline, {2: detection}, mode=OVERLAY,
+        )
+        self.assertEqual(output.status, APPLIED)
+        self.assertEqual(output.reason, "second_half_prefix_overlaid_estimated_frame")
+        self.assertEqual(output.labels[9:14], ("D", "D", "D", "H", "H"))
+        self.assertEqual(output.changed_frames, (9, 10))
 
     def test_kickoff_at_graded_start_is_rejected(self):
         output = apply_kickoff_prefix(

@@ -15,21 +15,24 @@ assets and frame-specific diagnostics must remain local under the ignored
   statuses, timestamps, aggregate ATD evidence, and the hypothetical
   second-half prefix. No submission CSV is written. Diagnostics include only
   aggregate, non-reconstructive evidence counts; they do not export frame rows.
-- `overlay`: run E04 and write a modified CSV only when the second-half ATD
-  detector returns `CONFIRMED`; the Phase 4 policy changes only
-  `[second_half_graded_start, kickoff_execution_frame)` to `D`.
+- `overlay`: run E04 and write a modified CSV when the second-half ATD detector
+  returns `CONFIRMED`, `ESTIMATED_FRAME`, or a frame-resolvable
+  `BOUNDED_INTERVAL`; the policy changes only
+  `[second_half_graded_start, detector_frame)` to `D`.
 
 The detector treats a short missing-ball interval as a bounded execution
-interval only when subsequent motion is corroborated. `BOUNDED_INTERVAL` is
-never eligible for overlay; only an exact, contiguous `CONFIRMED` result can
-change labels. Player proximity, center-circle occupancy, and player motion
-are supporting evidence and cannot confirm a kickoff by themselves.
+interval only when subsequent motion is corroborated. The policy is
+algorithmic rather than a one-to-one legal-event map: an estimated frame or
+bounded interval can contribute a reproducible prefix boundary when it resolves
+to a frame. Ambiguous, missing, and frame-less evidence remains rejected.
+Player proximity, center-circle occupancy, and player motion are supporting
+evidence and cannot create a frame by themselves.
 
 When persistent plausible ball motion occurs inside the five-second Smart Tag
 interval but strict centre setup is unavailable, audit mode reports
 `ESTIMATED_FRAME` with `best_estimate_frame` and a video-relative timestamp.
-This is intended for manual video inspection only. It is never used by the
-overlay policy or converted into a submission label.
+That estimate is now an opt-in algorithmic input to the overlay policy; it is
+not claimed to be a perfect legal kickoff annotation.
 
 Audit mode covers both supported kickoff Smart Tag types: opening `Kick Off
 (Start)` and post-goal `Kick Off (After Goal)`. Every eligible event receives
@@ -37,9 +40,9 @@ its own event-indexed detection record. Only the two opening results feed the
 existing half-boundary policy; post-goal detections remain informational until
 a separate restart-possession policy is justified.
 
-The first-half result is diagnostic only. A rejected or ambiguous second-half
-result leaves the parent labels unchanged and causes `overlay` to exit with an
-error without writing the requested submission.
+The first-half result is diagnostic only. A rejected, ambiguous, or frame-less
+second-half result leaves the parent labels unchanged and causes `overlay` to
+exit with an error without writing the requested submission.
 
 ## Invocation
 

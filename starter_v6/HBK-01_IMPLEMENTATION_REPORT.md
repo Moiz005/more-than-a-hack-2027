@@ -8,8 +8,9 @@ Parent runner: `starter_v6.run_e04`
 
 ## Decision
 
-**GO for the isolated engineering experiment. NO-GO for promoting an overlay
-submission or claiming a leaderboard improvement.**
+**GO for the isolated engineering experiment and approximate algorithmic
+overlay. Do not claim a leaderboard improvement from the public five-minute
+score.**
 
 HBK-01 is synthetic-tested, tactical-only, opt-in, deterministic, locally
 provenanced, and fail-closed. The supplied tactical run did not provide enough
@@ -17,14 +18,16 @@ ATD evidence to confirm either opening kickoff, so the overlay correctly
 produced no candidate CSV. Real boundary precision, event recall, private
 `spellF1`, and private `macroF1` remain **UNKNOWN**.
 
-The existing E04 output remains the immediate submission fallback. Enabling an
-overlay requires a future run with a confirmed second-half kickoff and the same
-policy/invariant checks; no fixed frame or manually observed timestamp is an
-acceptable substitute.
+The existing E04 output remains the exact fallback. The overlay may now use a
+reproducible `CONFIRMED`, `ESTIMATED_FRAME`, or frame-resolvable
+`BOUNDED_INTERVAL` result. This is intentionally an approximate algorithmic
+solution rather than a one-to-one legal-event map; ambiguous, missing, and
+frame-less evidence remains rejected.
 
-The audit-estimate extension may report a strongest movement frame inside the
-Smart Tag interval for manual inspection. This estimate is explicitly not an
-exact execution confirmation and cannot modify labels.
+The audit-estimate extension reports a strongest movement frame inside the
+Smart Tag interval. It is not an exact execution confirmation, but it can now
+modify the permitted second-half pre-kickoff prefix when overlay mode is
+explicitly selected.
 
 ## Ablation and local run evidence
 
@@ -35,8 +38,8 @@ accuracy measurements.
 |---|---|---|---:|---|
 | E04 original | `COMPLETE` | `d1604474717565a460d30bdef271d4e6e9b6c088c00bec84f6ef3d97a35f74ae` | 0 vs. itself | 199,319 ordered rows; tactical mask checks passed |
 | HBK-01 off | `COMPLETE` | `d1604474717565a460d30bdef271d4e6e9b6c088c00bec84f6ef3d97a35f74ae` | 0 vs. E04 | Byte-identical to clean E04 baseline; official validator passed |
-| HBK-01 audit | `AUDIT_ONLY / REJECTED` | none | 0 | 638 Smart Tag records retained; one eligible opening candidate per half; both detectors `INSUFFICIENT_EVIDENCE`; all policy preservation assertions true |
-| HBK-01 overlay | `NO-GO / REJECTED` | none | 0 | Exit code `2`; reason `second_half_status_INSUFFICIENT_EVIDENCE`; no submission file written |
+| HBK-01 audit | `AUDIT_ONLY / REJECTED` | none | 0 | 638 Smart Tag records retained; six eligible kickoff events; five `ESTIMATED_FRAME`, one `INSUFFICIENT_EVIDENCE`; audit leaves labels unchanged |
+| HBK-01 overlay | `ALGORITHM-PROPOSED` | generated per run | detector-dependent | Estimated/bounded opening evidence may produce a deterministic second-half prefix; ambiguous or frame-less evidence still exits `2` without a CSV |
 
 ### Local commands and results
 
@@ -148,11 +151,27 @@ The audit-estimate pass adds a separate `ESTIMATED_FRAME` result when
 persistent plausible ball motion is observed inside the Smart Tag interval but
 strict setup evidence is insufficient. The tactical-only audit produced local
 manual-check estimates of `00:07:27.5` (first half, frame 11188) and
-`01:15:46.4` (second half, frame 113660). Both remain audit-only; the policy
-reported zero label changes and did not write an overlay submission.
+`01:15:46.4` (second half, frame 113660). The second-half estimate is now an
+algorithmic overlay input; it is explicitly approximate and must be checked
+against the resulting metrics and later evidence.
 
 The all-kickoffs tactical audit also covered four eligible post-goal kickoff
 tags. Across six eligible events (two opening, four post-goal), five returned
 `ESTIMATED_FRAME` and one returned `INSUFFICIENT_EVIDENCE`. No post-goal result
 changed labels; only opening results were passed to the boundary policy.
 The final audit artifact is `.local-checkpoints/hbk01/hbk01-all-kickoffs-final-20261105/`.
+
+## Approximate overlay follow-up
+
+The boundary policy was subsequently changed to use reproducible
+`ESTIMATED_FRAME` and frame-resolvable `BOUNDED_INTERVAL` evidence. The real
+tactical overlay run
+`.local-checkpoints/hbk01/approximate-overlay-20261105/` applied the estimated
+second-half frame 113660 (`4546.4` seconds), changing 2,618 pre-kickoff labels
+to `D` while preserving the post-kickoff suffix and other timeline regions.
+Metrica's validator accepted the 199,319-row CSV. The official public evaluator
+reported `macroF1=0.6865`, `spellF1=0.4750`, `transF1=0.2222`, `lat_f=-7.2`,
+`shareE=0.050`, and `frag=0.81`, identical to the `off` artifact because the
+public five-minute ground truth does not include these second-half changed
+frames. This is an integration result, not evidence that the estimate is
+accurate on the private full-match labels.
