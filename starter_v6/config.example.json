@@ -1,6 +1,6 @@
 {
   "evidence_mode": "e03",
-  "ownership_mode": "v3_exact",
+  "integration_mode": "exact_v3",
   "source": "tactical",
   "data_dir": null,
   "output": ".local-checkpoints/phase1/e04_isolated_submission.csv",

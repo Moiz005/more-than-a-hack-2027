@@ -40,6 +40,7 @@ class E02FrameInference:
     control_hypothesis: Optional["ControlHypothesis"] = None
     control_transition: Optional["ControlTransition"] = None
     play_state_hypothesis: Optional[PlayStateHypothesis] = None
+    integration_decision: str = "legacy_unmasked"
 
 
 @dataclass(frozen=True)
@@ -220,7 +221,8 @@ def _team_evidence(features: FrameFeatures, config: PossessionConfig, quality: E
 def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: DeadBallObservation,
             tag: Optional[TagEvidence] = None,
             possession_config: PossessionConfig = PossessionConfig(),
-            atd_signal: Optional[AtdSignals] = None) -> E02FrameInference:
+            atd_signal: Optional[AtdSignals] = None,
+            integration_mask_reason: Optional[str] = None) -> E02FrameInference:
     dead_score = max(dead.dead_score, dead.confidence if dead.cues else 0.0)
     if dead.hard_evidence:
         dead_score = 1.0
@@ -236,6 +238,14 @@ def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: De
             home, away = max(1.0 - team.confidence, 1e-12), team.confidence
     else:
         home = away = max(dead.live_score, 0.0) / 2.0
+    if integration_mask_reason == "stage1_dead_owner_masked":
+        home = away = 0.0
+        dead = replace(dead, live_score=0.0)
+    elif integration_mask_reason == "live_owner_reacquisition_pending":
+        # Stage 1 has established LIVE, while Stage 2 has not yet reacquired a side.
+        home = away = 0.0
+        dead_score = 0.0
+        dead = replace(dead, live_score=max(dead.live_score, 0.15))
     emission = fuse_evidence(
         features.frame.frame, features.frame.half,
         home=home, away=away, dead=dead_score, live=dead.live_score,
@@ -276,7 +286,12 @@ def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: De
             "smart_tag_context:{}".format(",".join(tag.families)),
             0.5, False, 0.75, "smart_tag_context",
         ))
-    if dead.confirmed or label == "D":
+    if integration_mask_reason is not None:
+        control_hypothesis = ControlHypothesis(
+            "UNKNOWN", None, 0.0, (integration_mask_reason,),
+            tuple(features.quality.flags) + (integration_mask_reason,),
+        )
+    elif dead.confirmed or label == "D":
         control_hypothesis = ControlHypothesis(
             "UNKNOWN", None, 0.0, ("confirmed_dead",),
             tuple(features.quality.flags) + ("dead_ball",),
@@ -333,6 +348,7 @@ def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: De
         tag_context=tag, evidence=tuple(evidence),
         control_hypothesis=control_hypothesis,
         play_state_hypothesis=play_hypothesis,
+        integration_decision=integration_mask_reason or "legacy_unmasked",
     )
 
 
@@ -442,6 +458,7 @@ def iter_infer_e02(
     previous_frame: Optional[int] = None
     missing_count = uncertain_count = 0
     dead_persistence = False
+    ownership_acquisition_pending = False
     recovery_team: Optional[str] = None
     recovery_count = 0
     candidate_team: Optional[str] = None
@@ -461,6 +478,15 @@ def iter_infer_e02(
     for features, atd_signal in _iter_features_with_signals(frames, feature_config):
         tag = next(tags) if tags is not None else None
         frame = features.frame
+        if (feature_config.stage1_lifecycle_enabled
+                and feature_config.stage1_stage2_fusion_enabled
+                and not dead_persistence
+                and "free kick" in frame.restart_types
+                and frame.restart_action is not None):
+            # A Free Kick tag cannot distinguish a referee award from advantage.
+            # Without a confirmed D state, setup-to-motion is not a legal restart.
+            frame = replace(frame, restart_action=None)
+            features = replace(features, frame=frame)
         if previous_frame is not None and frame.frame != previous_frame + 1:
             raise ValueError("frames must be contiguous and ordered")
         previous_frame = frame.frame
@@ -475,6 +501,7 @@ def iter_infer_e02(
             state = "X"
             missing_count = uncertain_count = candidate_count = dead_candidate_count = 0
             dead_persistence = False
+            ownership_acquisition_pending = False
             recovery_team = None
             recovery_count = 0
             candidate_team = None
@@ -525,6 +552,7 @@ def iter_infer_e02(
             state = "X"
             missing_count = uncertain_count = candidate_count = dead_candidate_count = 0
             dead_persistence = False
+            ownership_acquisition_pending = False
             recovery_team = None
             recovery_count = 0
             dead_candidate_family = None
@@ -545,6 +573,18 @@ def iter_infer_e02(
                 raw_dead, confidence=0.0, dead_score=0.0,
                 live_score=max(raw_dead.live_score, 1.0),
             )
+        if (feature_config.stage1_lifecycle_enabled and dead_persistence
+                and frame.restart_action is not None):
+            # Once a confirmed stop exists, the recognized restart action ends
+            # that DEAD interval even if the same frame retains stale boundary
+            # cues. A restart action without prior confirmed DEAD cannot do so.
+            raw_dead = DeadBallObservation(
+                (), 0.0, False, False, ("restart_action",), ("live_restart",),
+                "restart_action", ("restart_action",), False, 0.0, 0.9,
+            )
+            confirmed_dead = False
+            dead_candidate_family = None
+            dead_candidate_count = 0
         dead = finalize_dead_ball(raw_dead, confirmed_dead)
         dead_ball_detector.remember_confirmation(frame, raw_dead, confirmed_dead, possession_config)
 
@@ -575,12 +615,19 @@ def iter_infer_e02(
             gap_attempted = False
             newly_dead = not dead_persistence
             dead_persistence = feature_config.stage1_lifecycle_enabled
+            ownership_acquisition_pending = (
+                feature_config.stage1_stage2_fusion_enabled
+            )
             recovery_team = None
             recovery_count = 0
             state = "D"
             missing_count = uncertain_count = candidate_count = 0
             candidate_team = None
-            result = _result(features, "D", team, dead, tag, possession_config, atd_signal)
+            result = _result(
+                features, "D", team, dead, tag, possession_config, atd_signal,
+                "stage1_dead_owner_masked"
+                if feature_config.stage1_stage2_fusion_enabled else None,
+            )
             if newly_dead:
                 result = _set_play_state(result, "STOP_ONSET", dead.confidence,
                                          dead.source + dead.cues)
@@ -594,6 +641,9 @@ def iter_infer_e02(
         if dead_persistence and feature_config.stage1_lifecycle_enabled:
             if frame.restart_action is not None:
                 dead_persistence = False
+                ownership_acquisition_pending = (
+                    feature_config.stage1_stage2_fusion_enabled
+                )
                 state = "X"
                 candidate_team = None
                 candidate_count = 0
@@ -627,6 +677,7 @@ def iter_infer_e02(
                     recovery_count = 0
                 if supported_live and recovery_count >= possession_config.acquire_frames:
                     dead_persistence = False
+                    ownership_acquisition_pending = False
                     state = team.team
                     candidate_team = None
                     candidate_count = 0
@@ -643,11 +694,24 @@ def iter_infer_e02(
                         dead.confirmation_family,
                     )
                     result = _result(features, "D", team, persisted, tag,
-                                     possession_config, atd_signal)
+                                     possession_config, atd_signal,
+                                     "stage1_dead_owner_masked"
+                                     if feature_config.stage1_stage2_fusion_enabled else None)
                     yield _set_play_state(result, "DEAD_PERSISTENCE",
                                           possession_config.confirmed_dead_score,
                                           persisted.source + persisted.cues)
                     continue
+
+        if (feature_config.stage1_stage2_fusion_enabled
+                and frame.restart_action is not None
+                and recovered_status is None):
+            # A legal restart puts play live, but its action frame cannot name
+            # the restarting team without independent consecutive control.
+            ownership_acquisition_pending = True
+            state = "X"
+            candidate_team = None
+            candidate_count = 0
+            recovered_status = "LEGAL_RESTART_EXECUTION"
 
         # Observed recovery separates a new missing interval from an unresolved old transition.
         # Flush the prior interval before buffering any later gap, preserving frame order.
@@ -677,7 +741,12 @@ def iter_infer_e02(
             if missing_count > possession_config.max_missing_frames:
                 state = "X"
             label = state if state in {"H", "A"} else "X"
-            pending_gap.append(_result(features, label, team, dead, tag, possession_config, atd_signal))
+            pending_gap.append(_result(
+                features, label, team, dead, tag, possession_config, atd_signal,
+                "live_owner_reacquisition_pending"
+                if feature_config.stage1_stage2_fusion_enabled
+                and ownership_acquisition_pending else None,
+            ))
 
             opposing_team = "A" if gap_prior_state == "H" else "H" if gap_prior_state == "A" else None
             gap_support_ok = (
@@ -724,7 +793,28 @@ def iter_infer_e02(
             if uncertain_count > possession_config.max_uncertain_frames:
                 state = "X"
             label = state if state in {"H", "A"} else "X"
-            result = _result(features, label, team, dead, tag, possession_config, atd_signal)
+            result = _result(
+                features, label, team, dead, tag, possession_config, atd_signal,
+                "live_owner_reacquisition_pending"
+                if feature_config.stage1_stage2_fusion_enabled
+                and ownership_acquisition_pending else None,
+            )
+        elif (feature_config.stage1_stage2_fusion_enabled
+              and ownership_acquisition_pending
+              and frame.restart_action is not None):
+            # Do not count the restart execution frame as the first sample in
+            # the post-restart consecutive-control acquisition window.
+            candidate_team = None
+            candidate_count = 0
+            result = _result(
+                features, "X", team, dead, tag, possession_config, atd_signal,
+                "live_owner_reacquisition_pending",
+            )
+            if recovered_status is not None:
+                result = _set_play_state(
+                    result, recovered_status, min(1.0, team.confidence),
+                    dead.source + (frame.restart_action,),
+                )
         else:
             uncertain_count = 0
             observed_team = team.team
@@ -743,6 +833,7 @@ def iter_infer_e02(
             # pre-stoppage ATD persistence cannot accelerate reacquisition.
             required_acquire_frames = possession_config.acquire_frames
             if observed_team != state and candidate_count >= required_acquire_frames:
+                was_reacquiring_after_stage1 = ownership_acquisition_pending
                 transition = ControlTransition(
                     prior_owner, observed_team,
                     frame.frame - candidate_count + 1, frame.frame,
@@ -750,10 +841,18 @@ def iter_infer_e02(
                     "persistent_observed_control",
                 )
                 state = observed_team
+                ownership_acquisition_pending = False
+                if was_reacquiring_after_stage1:
+                    recovered_status = "LIVE_RECOVERED"
                 candidate_team = None
                 candidate_count = 0
             label = state if state in {"H", "A"} else "X"
-            result = _result(features, label, team, dead, tag, possession_config, atd_signal)
+            result = _result(
+                features, label, team, dead, tag, possession_config, atd_signal,
+                "live_owner_reacquisition_pending"
+                if feature_config.stage1_stage2_fusion_enabled
+                and ownership_acquisition_pending else None,
+            )
             if recovered_status is not None:
                 result = _set_play_state(result, recovered_status,
                                          min(1.0, team.confidence),

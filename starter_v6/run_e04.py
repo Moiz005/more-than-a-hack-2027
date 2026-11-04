@@ -139,6 +139,8 @@ def main(argv=None):
         current_emissions = []
         seen_halves = set()
         fusion_counts = Counter()
+        play_state_counts = Counter()
+        integration_decisions = Counter()
 
         def flush_half():
             nonlocal current_half, current_start, current_emissions
@@ -162,6 +164,9 @@ def main(argv=None):
                 raise ValueError('misaligned emission stream')
             processed = index + 1
             parent_labels[index] = result.inference.label
+            if result.play_state_hypothesis is not None:
+                play_state_counts[result.play_state_hypothesis.status] += 1
+            integration_decisions[result.integration_decision] += 1
             emission_values = (emission.home, emission.away, emission.dead)
             emission_argmax[index] = ('H', 'A', 'D')[max(range(3), key=emission_values.__getitem__)]
             missing_ball[index] = result.features.quality.ball_missing
@@ -226,7 +231,12 @@ def main(argv=None):
         report["tactical_fusion"] = {
             "enabled": config["features"].atd_signal_fusion_enabled,
             "ownership_mode": config["ownership_mode"],
+            "integration_mode": config["integration_mode"],
+            "stage1_lifecycle_enabled": config["features"].stage1_lifecycle_enabled,
+            "stage1_stage2_fusion_enabled": config["features"].stage1_stage2_fusion_enabled,
             "aggregate_counts": dict(sorted(fusion_counts.items())),
+            "play_state_hypotheses": dict(sorted(play_state_counts.items())),
+            "stage1_stage2_decisions": dict(sorted(integration_decisions.items())),
             "interpretation": "aggregate internal hypotheses, transition, and context flow; not accuracy or evidence of improvement",
             "unknown_control_is_internal": True,
             "submission_abstentions_are_separately_reported": True,

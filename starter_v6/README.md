@@ -131,6 +131,41 @@ goal-specific onset, and legal referee decisions remain uncertain. This mode
 has synthetic engineering coverage only; no target-match or public-label
 accuracy comparison was made. See `TFV3_P6_LIFECYCLE_REPORT.md`.
 
+### TacticalFusion plan Phase 7 — Stage 1 / Stage 2 integration
+
+The E04 runner accepts `integration_mode` for controlled, reproducible
+experiments. V3's existing Smart Tag evidence remains enabled in each named
+mode; `tag_context_only` means the new typed Stage 1 lifecycle is added without
+the new ATD ownership bridge.
+
+| `integration_mode` | New ATD ownership fusion | Typed Stage 1 lifecycle and owner mask |
+|---|---:|---:|
+| `exact_v3` | off | off |
+| `atd_only` | on | off |
+| `tag_context_only` | off | on |
+| `atd_plus_tag` | on | on |
+
+`features.atd_signal_fusion_enabled`, `features.stage1_lifecycle_enabled`,
+`features.stage1_stage2_fusion_enabled`, and `tag_features.enabled` remain
+independently configurable when using custom config (the Stage 1→Stage 2 mask
+requires Stage 1 lifecycle). Phase 4 rejected runtime homography features, so
+there is no ATD+tag+homography preset. `integration_mode` and the legacy
+`ownership_mode` are mutually exclusive.
+
+When the Stage 1→Stage 2 mask is enabled, confirmed DEAD removes H/A ownership
+potentials. A detected restart marks play live but gives equal H/A mass until
+the existing consecutive-control rule reacquires an owner. Low-quality or
+unknown-owner evidence stays neutral. A Free Kick context without a confirmed
+DEAD interval cannot reset live ownership because that tag cannot distinguish
+an awarded restart from advantage. Half resets and ungraded X handling remain
+unchanged. These evidence potentials and confidence values are not calibrated
+probabilities.
+
+E04 aggregate diagnostics record the selected integration mode, typed
+play-state counts, and bounded integration decision reason counts; they do not
+include frame-level match traces. Synthetic integration contracts are in
+`tests/test_phase7_integration.py`; see `TFV3_P7_INTEGRATION_REPORT.md`.
+
 ## Limitations and status
 
 ### Differences from E01–E03

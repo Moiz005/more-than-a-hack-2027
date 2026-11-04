@@ -12,7 +12,10 @@ class E04ConfigTests(unittest.TestCase):
         self.assertEqual(cfg["hmm"].initial, (0.45, 0.45, 0.1))
         self.assertEqual(cfg["hmm"].temperature, 1.0)
         self.assertEqual(cfg["ownership_mode"], "v3_exact")
+        self.assertEqual(cfg["integration_mode"], "exact_v3")
         self.assertFalse(cfg["features"].atd_signal_fusion_enabled)
+        self.assertFalse(cfg["features"].stage1_lifecycle_enabled)
+        self.assertFalse(cfg["features"].stage1_stage2_fusion_enabled)
         self.assertTrue(cfg["tag_features"]["enabled"])
 
     def test_rejects_unknown_hmm_key(self):
@@ -38,6 +41,16 @@ class E04ConfigTests(unittest.TestCase):
             path = Path(directory) / "config.json"
             path.write_text('{"ownership_mode": null}')
             with self.assertRaises(ValueError):
+                load_e04_config(path)
+
+    def test_rejects_ambiguous_integration_and_ownership_modes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text(json.dumps({
+                "integration_mode": "exact_v3",
+                "ownership_mode": "v3_exact",
+            }))
+            with self.assertRaisesRegex(ValueError, "cannot both be set"):
                 load_e04_config(path)
 
     def test_rejects_non_object_top_level_json(self):

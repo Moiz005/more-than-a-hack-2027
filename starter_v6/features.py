@@ -37,6 +37,7 @@ class E02Config:
     ownership_flight_speed_mps: float = 8.0
     flight_owner_carry_confidence: float = 0.65
     stage1_lifecycle_enabled: bool = False
+    stage1_stage2_fusion_enabled: bool = False
 
     def __post_init__(self) -> None:
         for name in ("top_k", "quality_reference_players", "low_player_count", "gap_min_players_per_team", "gap_support_frames", "gap_max_frames"):
@@ -62,6 +63,10 @@ class E02Config:
             raise ValueError("atd_signal_fusion_enabled must be boolean")
         if not isinstance(self.stage1_lifecycle_enabled, bool):
             raise ValueError("stage1_lifecycle_enabled must be boolean")
+        if not isinstance(self.stage1_stage2_fusion_enabled, bool):
+            raise ValueError("stage1_stage2_fusion_enabled must be boolean")
+        if self.stage1_stage2_fusion_enabled and not self.stage1_lifecycle_enabled:
+            raise ValueError("stage1_stage2_fusion_enabled requires stage1_lifecycle_enabled")
         for name in (
             "atd_control_confidence_boost", "atd_boundary_confidence_scale",
             "atd_rapid_motion_confidence_scale", "flight_owner_carry_confidence",
