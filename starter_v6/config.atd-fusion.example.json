@@ -18,8 +18,7 @@
     "atd_signal_fusion_enabled": true,
     "atd_control_confidence_boost": 0.2,
     "atd_boundary_confidence_scale": 0.5,
-    "atd_rapid_motion_confidence_scale": 0.5,
-    "atd_restart_acquisition_frames": 1
+    "atd_rapid_motion_confidence_scale": 0.5
   },
   "tag_features": {
     "enabled": true

@@ -168,6 +168,24 @@ def main(argv=None):
             fusion_counts["active_tag_context_frames"] += bool(result.tag_context and result.tag_context.active)
             fusion_counts["atd_control_fused_frames"] += "ATD_CONTROL_PERSISTENCE" in result.inference.team_evidence.source
             fusion_counts["restart_context_frames"] += "ATD_RESTART_MOTION_CONTEXT" in result.inference.team_evidence.source
+            if result.control_hypothesis is not None:
+                fusion_counts["control_hypothesis_" + result.control_hypothesis.status.lower()] += 1
+                if emission.half in {1, 2} and result.control_hypothesis.status == "UNKNOWN":
+                    fusion_counts["graded_internal_unknown_control_frames"] += 1
+            if result.control_transition is not None:
+                fusion_counts["accepted_control_events"] += 1
+                if result.control_transition.from_team == "UNKNOWN":
+                    fusion_counts["owner_initializations"] += 1
+                else:
+                    fusion_counts["handover_transitions"] += 1
+                fusion_counts[
+                    "control_transitions_{}_to_{}".format(
+                        result.control_transition.from_team.lower(),
+                        result.control_transition.to_team.lower(),
+                    )
+                ] += 1
+            if "OWNERSHIP_CARRY_UNCONTROLLED_FLIGHT" in result.inference.team_evidence.source:
+                fusion_counts["uncontrolled_flight_owner_carry_frames"] += 1
             if emission.half == 0:
                 flush_half()
                 continue
@@ -200,8 +218,18 @@ def main(argv=None):
         )
         report["tactical_fusion"] = {
             "enabled": config["features"].atd_signal_fusion_enabled,
+            "ownership_mode": config["ownership_mode"],
             "aggregate_counts": dict(sorted(fusion_counts.items())),
-            "interpretation": "signal and context flow counts; not accuracy or evidence of improvement",
+            "interpretation": "aggregate internal hypotheses, transition, and context flow; not accuracy or evidence of improvement",
+            "unknown_control_is_internal": True,
+            "submission_abstentions_are_separately_reported": True,
+            "graded_internal_unknown_control_frames": fusion_counts[
+                "graded_internal_unknown_control_frames"
+            ],
+            "graded_external_x_output_frames": sum(
+                label == "X" and halves[index] in {1, 2}
+                for index, label in enumerate(labels)
+            ),
         }
         atomic_write_text(targets[1], json.dumps(report, indent=2, sort_keys=True) + '\n')
         runtime = time.perf_counter() - started

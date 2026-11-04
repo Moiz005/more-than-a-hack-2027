@@ -11,6 +11,9 @@ class E04ConfigTests(unittest.TestCase):
         cfg = load_e04_config(Path(__file__).parents[1] / "config.example.json")
         self.assertEqual(cfg["hmm"].initial, (0.45, 0.45, 0.1))
         self.assertEqual(cfg["hmm"].temperature, 1.0)
+        self.assertEqual(cfg["ownership_mode"], "v3_exact")
+        self.assertFalse(cfg["features"].atd_signal_fusion_enabled)
+        self.assertTrue(cfg["tag_features"]["enabled"])
 
     def test_rejects_unknown_hmm_key(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -28,4 +31,18 @@ class E04ConfigTests(unittest.TestCase):
             payload["hmm"]["initial"] = [0.4, 0.4, 0.4]
             path.write_text(json.dumps(payload))
             with self.assertRaises(ValueError):
+                load_e04_config(path)
+
+    def test_rejects_null_ownership_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text('{"ownership_mode": null}')
+            with self.assertRaises(ValueError):
+                load_e04_config(path)
+
+    def test_rejects_non_object_top_level_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text('["v3_exact"]')
+            with self.assertRaisesRegex(ValueError, "JSON object"):
                 load_e04_config(path)

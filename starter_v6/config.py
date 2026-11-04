@@ -1,6 +1,7 @@
 """Strict E04 JSON configuration loading."""
 import json
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 from starter_v6.run_e01 import load_config as load_parent_config
@@ -13,21 +14,34 @@ HMM_DEFAULTS = {
     "emission_weight": 1.0,
     "temperature": 1.0,
 }
+OWNERSHIP_MODES = {
+    "v3_exact": (False, True),
+    "atd_control": (True, False),
+    "atd_control_plus_context": (True, True),
+}
 
 
 def load_e04_config(path=None):
     parent = load_parent_config(None)
     raw = HMM_DEFAULTS.copy()
+    ownership_mode = None
     if path is not None:
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise ValueError("could not load config: {}".format(exc)) from exc
-        unknown = set(data) - {"evidence_mode", "source", "data_dir", "output", "diagnostics", "metadata", "possession", "features", "tag_features", "hmm"}
+        if not isinstance(data, dict):
+            raise ValueError("E04 config must be a JSON object")
+        unknown = set(data) - {"evidence_mode", "source", "data_dir", "output", "diagnostics", "metadata", "possession", "features", "tag_features", "hmm", "ownership_mode"}
         if unknown:
             raise ValueError("unknown E04 config keys: {}".format(", ".join(sorted(unknown))))
+        if "ownership_mode" in data:
+            ownership_mode = data["ownership_mode"]
+            if not isinstance(ownership_mode, str) or ownership_mode not in OWNERSHIP_MODES:
+                raise ValueError("ownership_mode must be one of: {}".format(", ".join(OWNERSHIP_MODES)))
         shared = dict(data)
         shared.pop("hmm", None)
+        shared.pop("ownership_mode", None)
         with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json") as temp:
             temp.write(json.dumps(shared))
             temp.flush()
@@ -50,4 +64,11 @@ def load_e04_config(path=None):
     except (TypeError, ValueError) as exc:
         raise ValueError("invalid HMM config: {}".format(exc)) from exc
     parent["hmm"] = config
+    if ownership_mode is not None:
+        atd_enabled, context_enabled = OWNERSHIP_MODES[ownership_mode]
+        parent["features"] = replace(
+            parent["features"], atd_signal_fusion_enabled=atd_enabled,
+        )
+        parent["tag_features"] = {"enabled": context_enabled}
+    parent["ownership_mode"] = ownership_mode or "custom"
     return parent

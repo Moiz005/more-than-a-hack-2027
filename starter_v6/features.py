@@ -34,10 +34,11 @@ class E02Config:
     atd_control_confidence_boost: float = 0.2
     atd_boundary_confidence_scale: float = 0.5
     atd_rapid_motion_confidence_scale: float = 0.5
-    atd_restart_acquisition_frames: int = 1
+    ownership_flight_speed_mps: float = 8.0
+    flight_owner_carry_confidence: float = 0.65
 
     def __post_init__(self) -> None:
-        for name in ("top_k", "quality_reference_players", "low_player_count", "gap_min_players_per_team", "gap_support_frames", "gap_max_frames", "atd_restart_acquisition_frames"):
+        for name in ("top_k", "quality_reference_players", "low_player_count", "gap_min_players_per_team", "gap_support_frames", "gap_max_frames"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError("{} must be a positive integer".format(name))
@@ -60,11 +61,17 @@ class E02Config:
             raise ValueError("atd_signal_fusion_enabled must be boolean")
         for name in (
             "atd_control_confidence_boost", "atd_boundary_confidence_scale",
-            "atd_rapid_motion_confidence_scale",
+            "atd_rapid_motion_confidence_scale", "flight_owner_carry_confidence",
         ):
             value = getattr(self, name)
-            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or not 0.0 <= value <= 1.0):
                 raise ValueError("{} must be finite and in [0, 1]".format(name))
+        if (isinstance(self.ownership_flight_speed_mps, bool)
+                or not isinstance(self.ownership_flight_speed_mps, (int, float))
+                or not math.isfinite(self.ownership_flight_speed_mps)
+                or self.ownership_flight_speed_mps <= 0):
+            raise ValueError("ownership_flight_speed_mps must be finite and positive")
 
 
 @dataclass(frozen=True)

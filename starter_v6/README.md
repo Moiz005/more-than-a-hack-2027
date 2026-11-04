@@ -73,6 +73,24 @@ copy a hard parent label or change HMM transition parameters. Missing gaps that
 fail quality or recovery checks remain uncertain and are not forced to D or to
 the opposing team.
 
+The E04-only `ownership_mode` setting provides three reproducible Phase 5
+ablations: `v3_exact` disables the ATD fusion bridge and retains bounded Smart
+Tag context; `atd_control` enables ATD control signals and disables Smart Tag
+team context; `atd_control_plus_context` enables both. Omitting the setting
+retains explicit custom `features` and `tag_features` options. Per-frame
+`ControlHypothesis` records H/A/UNKNOWN, evidence groups, and quality flags;
+accepted changes include their support interval and count in
+`ControlTransition`. UNKNOWN is internal and never becomes a CSV class. In the
+two ATD modes, a fast ball near an opposing player retains the prior live owner
+in the emission until persistent ATD control supports a transfer. This is a
+synthetic-tested policy hypothesis, not a calibrated probability or accuracy
+claim. Aggregate diagnostics keep internal unknown-control counts separate
+from final X output counts. Restart motion is context only: after confirmed D,
+ownership initialization uses the normal consecutive observed-control gate, so
+pre-stoppage persistence cannot shorten reacquisition. These named presets are
+E04 JSON runner settings; direct `iter_infer_e02` callers configure feature
+fusion and tag context through their respective arguments.
+
 Phase 6 defines `fuse_evidence()` as the fusion boundary: H/A are ownership
 conditional-on-live potentials, `live` is neutral live mass when ownership is
 unknown, and `dead` is play-state evidence. The output is finite and normalized

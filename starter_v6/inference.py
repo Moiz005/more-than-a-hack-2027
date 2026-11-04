@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from itertools import tee
+import math
 from typing import Iterable, Iterator, List, Optional, Tuple
 
 from starter_v6.features import E02Config, FrameFeatures, iter_frame_features
@@ -35,6 +36,64 @@ class E02FrameInference:
     atd_signals: Optional[AtdSignals] = None
     tag_context: Optional[TagEvidence] = None
     evidence: Tuple[Evidence, ...] = ()
+    control_hypothesis: Optional["ControlHypothesis"] = None
+    control_transition: Optional["ControlTransition"] = None
+
+
+@dataclass(frozen=True)
+class ControlHypothesis:
+    """Per-frame team-control proposal; UNKNOWN is internal, never an output label."""
+
+    status: str
+    team: Optional[str]
+    confidence: float
+    evidence_groups: Tuple[str, ...]
+    quality_flags: Tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.status not in {"H", "A", "UNKNOWN"}:
+            raise ValueError("control hypothesis status must be H, A, or UNKNOWN")
+        if self.team not in {None, "H", "A"}:
+            raise ValueError("control hypothesis team must be H, A, or absent")
+        if (self.status == "UNKNOWN") != (self.team is None):
+            raise ValueError("UNKNOWN status and absent control team must agree")
+        if (isinstance(self.confidence, bool) or not isinstance(self.confidence, (int, float))
+                or not math.isfinite(self.confidence) or not 0.0 <= self.confidence <= 1.0):
+            raise ValueError("control hypothesis confidence must be finite and in [0, 1]")
+        if not isinstance(self.evidence_groups, tuple) or not isinstance(self.quality_flags, tuple):
+            raise ValueError("control hypothesis provenance and flags must be tuples")
+
+
+@dataclass(frozen=True)
+class ControlTransition:
+    """Accepted temporally supported change in the internal live-team owner."""
+
+    from_team: str
+    to_team: str
+    start_frame: int
+    end_frame: int
+    support_frames: int
+    confidence: float
+    accepted: bool
+    reason: str
+
+    def __post_init__(self) -> None:
+        if self.from_team not in {"H", "A", "UNKNOWN"} or self.to_team not in {"H", "A"}:
+            raise ValueError("control transition teams must be H, A, or UNKNOWN-to-H/A")
+        if self.from_team == self.to_team:
+            raise ValueError("control transition must change the owner")
+        if (isinstance(self.start_frame, bool) or isinstance(self.end_frame, bool)
+                or not isinstance(self.start_frame, int) or not isinstance(self.end_frame, int)
+                or self.start_frame < 0 or self.end_frame < self.start_frame):
+            raise ValueError("control transition frame interval is invalid")
+        if (isinstance(self.support_frames, bool) or not isinstance(self.support_frames, int)
+                or self.support_frames < 1):
+            raise ValueError("control transition support_frames must be positive")
+        if (isinstance(self.confidence, bool) or not isinstance(self.confidence, (int, float))
+                or not math.isfinite(self.confidence) or not 0.0 <= self.confidence <= 1.0):
+            raise ValueError("control transition confidence must be finite and in [0, 1]")
+        if not isinstance(self.accepted, bool) or not self.reason:
+            raise ValueError("control transition must record acceptance and a reason")
 
 
 @dataclass(frozen=True)
@@ -213,10 +272,30 @@ def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: De
             "smart_tag_context:{}".format(",".join(tag.families)),
             0.5, False, 0.75, "smart_tag_context",
         ))
+    if dead.confirmed or label == "D":
+        control_hypothesis = ControlHypothesis(
+            "UNKNOWN", None, 0.0, ("confirmed_dead",),
+            tuple(features.quality.flags) + ("dead_ball",),
+        )
+    elif "OWNERSHIP_CARRY_UNCONTROLLED_FLIGHT" in team.source:
+        control_hypothesis = ControlHypothesis(
+            "UNKNOWN", None, 0.0, ("ball_flight",),
+            tuple(features.quality.flags) + ("uncontrolled_flight",),
+        )
+    else:
+        evidence_groups = tuple(team.source)
+        if tag is not None and tag.active:
+            evidence_groups += ("tag_context_available",)
+        control_hypothesis = ControlHypothesis(
+            team.team if team.team in {"H", "A"} else "UNKNOWN",
+            team.team, team.confidence, evidence_groups,
+            tuple(features.quality.flags),
+        )
     return E02FrameInference(
         FrameInference(features.frame.frame, features.frame.half, label, team, dead),
         features, emission, relation, atd_signals=atd_signal,
         tag_context=tag, evidence=tuple(evidence),
+        control_hypothesis=control_hypothesis,
     )
 
 
@@ -347,10 +426,21 @@ def iter_infer_e02(
         previous_half = frame.half
 
         team = _team_evidence(features, possession_config, feature_config, tag, atd_signal)
+        uncontrolled_flight = bool(
+            feature_config.atd_signal_fusion_enabled and atd_signal is not None
+            and state in {"H", "A"} and team.team in {"H", "A"}
+            and team.team != state
+            and atd_signal.ball_motion.observed_speed_mps is not None
+            and atd_signal.ball_motion.observed_speed_mps >= feature_config.ownership_flight_speed_mps
+            and atd_signal.control.candidate_team != team.team
+            and not features.quality.implausible_ball_jump
+            and not features.quality.ball_speed_inconsistent
+        )
         raw_dead = dead_ball_detector.observe(
             frame, team, possession_config,
             live_reliable=not (features.quality.implausible_ball_jump
-                               or features.quality.ball_speed_inconsistent),
+                               or features.quality.ball_speed_inconsistent
+                               or uncontrolled_flight),
             boundary_coordinate_reliable=not features.quality.implausible_ball_jump,
         ).dead_ball_evidence
         if frame.half == 0:
@@ -377,6 +467,19 @@ def iter_infer_e02(
         )
         dead = finalize_dead_ball(raw_dead, confirmed_dead)
         dead_ball_detector.remember_confirmation(frame, raw_dead, confirmed_dead, possession_config)
+
+        # A fast ball near an opponent is not sufficient evidence of a transfer.
+        # Preserve the last accepted owner in the live emission until the ATD
+        # control proposal independently supports the receiving team.
+        if not confirmed_dead and uncontrolled_flight:
+            confidence = feature_config.flight_owner_carry_confidence
+            team = TeamObservation(
+                team.ball_observed, state, confidence,
+                team.nearest_home_m, team.nearest_away_m, team.margin_m,
+                confidence if state == "H" else 1.0 - confidence,
+                confidence if state == "A" else 1.0 - confidence,
+                team.source + ("OWNERSHIP_CARRY_UNCONTROLLED_FLIGHT",),
+            )
 
         if confirmed_dead:
             yield from _resolve_gap(
@@ -475,6 +578,8 @@ def iter_infer_e02(
         else:
             uncertain_count = 0
             observed_team = team.team
+            prior_owner = state if state in {"H", "A"} else "UNKNOWN"
+            transition = None
             if observed_team == state:
                 candidate_team = None
                 candidate_count = 0
@@ -483,21 +588,24 @@ def iter_infer_e02(
             else:
                 candidate_team = observed_team
                 candidate_count = 1
+            # Restart motion is contextual evidence, not fresh ownership support.
+            # Require the normal consecutive observed-control gate after DEAD so
+            # pre-stoppage ATD persistence cannot accelerate reacquisition.
             required_acquire_frames = possession_config.acquire_frames
-            if (
-                feature_config.atd_signal_fusion_enabled and atd_signal is not None
-                and atd_signal.restart_motion.candidate
-                and atd_signal.control.candidate_team == observed_team
-            ):
-                required_acquire_frames = min(
-                    required_acquire_frames, feature_config.atd_restart_acquisition_frames
-                )
             if observed_team != state and candidate_count >= required_acquire_frames:
+                transition = ControlTransition(
+                    prior_owner, observed_team,
+                    frame.frame - candidate_count + 1, frame.frame,
+                    candidate_count, min(1.0, team.confidence), True,
+                    "persistent_observed_control",
+                )
                 state = observed_team
                 candidate_team = None
                 candidate_count = 0
             label = state if state in {"H", "A"} else "X"
             result = _result(features, label, team, dead, tag, possession_config, atd_signal)
+            if transition is not None:
+                result = replace(result, control_transition=transition)
 
         if pending_gap:
             opposing_team = "A" if gap_prior_state == "H" else "H" if gap_prior_state == "A" else None
