@@ -37,6 +37,7 @@ class RuntimeRestartActionDetector:
         self._previous_frame = None
         self._previous_half = None
         self._previous_ball_xy = None
+        self._last_observed_ball_xy = None
         self._stationary_seen = False
         self._missing_seen = False
         self._action_emitted = False
@@ -55,6 +56,8 @@ class RuntimeRestartActionDetector:
 
         if frame.ball_xy is None:
             self._missing_seen = True
+            # Never infer a crossing from displacement across an unobserved gap.
+            self._previous_ball_xy = None
             return replace(frame, restart_context_consumed=self._action_emitted)
 
         displacement = None
@@ -65,9 +68,8 @@ class RuntimeRestartActionDetector:
             )
         speed = frame.ball_speed_mps
         moving = speed is not None and speed > self._RESTART_SPEED_MPS
-        credible_displacement = (
-            displacement is None
-            or self._MIN_DISPLACEMENT_M <= displacement <= self._MAX_DISPLACEMENT_M
+        credible_displacement = displacement is not None and (
+            self._MIN_DISPLACEMENT_M <= displacement <= self._MAX_DISPLACEMENT_M
         )
         nearby_player = any(
             math.hypot(player.x_m - frame.ball_xy[0], player.y_m - frame.ball_xy[1])
@@ -76,28 +78,47 @@ class RuntimeRestartActionDetector:
         )
 
         action = None
-        if (
-            not self._action_emitted
-            and moving
-            and credible_displacement
-            and (
-                self._stationary_seen
-                or (self._missing_seen and nearby_player)
-            )
-        ):
-            action = "restart_delivery" if self._stationary_seen else "restart_reappearance"
-            self._action_emitted = True
+        if not self._action_emitted and moving:
+            if len(frame.restart_types) > 1:
+                action = None
+            elif frame.restart_types == ("throw-in",):
+                previous_x, previous_y = (
+                    self._previous_ball_xy or self._last_observed_ball_xy or (None, None)
+                )
+                x, y = frame.ball_xy
+                previous_outside = (
+                    previous_x is not None and
+                    (previous_x < 0.0 or previous_x > 105.3
+                     or previous_y < 0.0 or previous_y > 68.0)
+                )
+                entered_field = 0.0 <= x <= 105.3 and 0.0 <= y <= 68.0
+                if (previous_outside and entered_field
+                        and (credible_displacement or (self._missing_seen and nearby_player))):
+                    action = "restart_throw_in_entry"
+                    self._action_emitted = True
+            elif frame.restart_types:
+                if self._stationary_seen and credible_displacement:
+                    action = "restart_delivery"
+                    self._action_emitted = True
+            elif (self._stationary_seen and credible_displacement) or (
+                self._missing_seen and nearby_player
+                and (displacement is None or credible_displacement)
+            ):
+                action = "restart_delivery" if self._stationary_seen else "restart_reappearance"
+                self._action_emitted = True
 
         if speed is not None and speed <= self._RESTART_SPEED_MPS:
             self._stationary_seen = True
         elif displacement is not None and displacement < self._MIN_DISPLACEMENT_M:
             self._stationary_seen = True
         self._previous_ball_xy = frame.ball_xy
+        self._last_observed_ball_xy = frame.ball_xy
         return replace(frame, restart_action=action or frame.restart_action,
                        restart_context_consumed=self._action_emitted)
 
     def _reset_context(self) -> None:
         self._previous_ball_xy = None
+        self._last_observed_ball_xy = None
         self._stationary_seen = False
         self._missing_seen = False
         self._action_emitted = False
@@ -105,9 +126,14 @@ class RuntimeRestartActionDetector:
 
 def restart_frame_mask(events: Iterable[SmartTagEvent], frame_count: int) -> bytearray:
     """Mark set-piece restart context, not possession labels, on half-open tag intervals."""
-    if frame_count < 0:
-        raise ValueError("frame_count must be non-negative")
-    mask = bytearray(frame_count)
+    return bytearray(bool(types) for types in restart_type_frames(events, frame_count))
+
+
+def restart_type_frames(events: Iterable[SmartTagEvent], frame_count: int):
+    """Return deduplicated normalized restart types for each frame; overlaps stay explicit."""
+    if isinstance(frame_count, bool) or not isinstance(frame_count, int) or frame_count < 0:
+        raise ValueError("frame_count must be a non-negative integer")
+    active = [set() for _ in range(frame_count)]
     for event in events:
         if event.start_frame < 0 or event.end_frame < event.start_frame or event.end_frame > frame_count:
             raise ValueError("Smart Tag interval is outside the frame timeline")
@@ -115,8 +141,9 @@ def restart_frame_mask(events: Iterable[SmartTagEvent], frame_count: int) -> byt
         tag_type = " ".join((event.tags.get("Type") or "").casefold().split())
         if code != "set pieces" or tag_type not in RESTART_TYPES:
             continue
-        mask[event.start_frame:event.end_frame] = b"\x01" * (event.end_frame - event.start_frame)
-    return mask
+        for index in range(event.start_frame, event.end_frame):
+            active[index].add(tag_type)
+    return [tuple(sorted(types)) for types in active]
 
 
 def frame_evidence_from_atd(
@@ -124,6 +151,7 @@ def frame_evidence_from_atd(
     metadata: ATDMetadata,
     half: int,
     restart_context: bool,
+    restart_types=(),
 ) -> FrameEvidence:
     """Convert one aligned ATD row; absent coordinates never become physical (0, 0)."""
     validate_atd_frame_mapping(raw.frame_id, raw.video_frame)
@@ -153,6 +181,7 @@ def frame_evidence_from_atd(
         players=tuple(players),
         ball_speed_mps=ball_speed,
         restart_context=restart_context,
+        restart_types=tuple(restart_types),
     )
 
 
@@ -161,10 +190,13 @@ def iter_frame_evidence(
     metadata: ATDMetadata,
     half_by_frame: bytearray,
     restart_mask: bytearray,
+    restart_types_by_frame=None,
 ) -> Iterator[FrameEvidence]:
     """Adapt every tactical row in strict 0-based order without materializing ATD arrays."""
     if len(half_by_frame) != len(restart_mask):
         raise ValueError("half and restart masks must have the same frame count")
+    if restart_types_by_frame is not None and len(restart_types_by_frame) != len(half_by_frame):
+        raise ValueError("restart type and half masks must have the same frame count")
     restart_detector = RuntimeRestartActionDetector()
     expected = 0
     for raw in raw_frames:
@@ -173,7 +205,8 @@ def iter_frame_evidence(
         if raw.frame_id != expected + 1:
             raise ValueError("expected frame_id {}, found {}".format(expected + 1, raw.frame_id))
         frame = frame_evidence_from_atd(
-            raw, metadata, half_by_frame[expected], bool(restart_mask[expected])
+            raw, metadata, half_by_frame[expected], bool(restart_mask[expected]),
+            restart_types_by_frame[expected] if restart_types_by_frame is not None else (),
         )
         yield restart_detector.observe(frame)
         expected += 1

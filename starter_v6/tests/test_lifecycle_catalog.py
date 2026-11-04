@@ -15,10 +15,12 @@ class LifecycleCatalogTests(unittest.TestCase):
         return result
 
     def test_L1_same_team_stop(self):
-        self.exact(live()+setup()+delivery(),[event(4,11)],'HHHHDDDHHHH',[('H',0,3),('H',7,10)])
+        # Free Kick context plus a still ball cannot distinguish an awarded foul from advantage.
+        self.exact(live()+setup()+delivery(),[event(4,11)],'H'*11,[('H',0,10)])
 
     def test_L2_stop_then_away(self):
-        self.exact(live()+setup()+delivery('A'),[event(4,11)],'HHHHDDDAAAA',[('H',0,3),('A',7,10)])
+        self.exact(live()+setup()+delivery('A'),[event(4,11)],'H'*7+'A'*4,
+                   [('H',0,6),('A',7,10)])
 
     def test_L3_direct_takeover(self):
         self.exact(live()+live(owner='A'),[],'HHHHAAAA',[('H',0,3),('A',4,7)])
@@ -29,25 +31,26 @@ class LifecycleCatalogTests(unittest.TestCase):
         self.exact(live()+live(1,owner='A')+live(),[],'H'*9,[('H',0,8)])
 
     def test_L5_comprehensive_boundary_gap_throwin_new_stop(self):
-        # Reappearance starts .9 m from the last visible boundary coordinate,
-        # within the existing runtime detector's 1 m displacement gate.
-        s=live(x=.1)+[Sample(-1.1,30.,None)]+gap(3)+delivery(x=-.5)
+        # Two consecutive outside observations corroborate the boundary cue.
+        s=live(x=.1)+[Sample(-1.1,30.,None),Sample(-1.1,30.,None)]+gap(3)+delivery(x=-.5)
         s+=live(2,x=.7,speed=.1)+[Sample(-.2,22.5,'H'),Sample(-1.2,25.,None)]
-        r=self.exact(s,[event(4,len(s),'Throw-in')],'H'*4+'D'*4+'H'*7+'D',
-                     [('H',0,3),('H',8,14)])
-        self.assertTrue(r['rows'][4]['evidence']['confirmed'])
-        self.assertIn('confirmed_stoppage_memory',r['rows'][5]['evidence']['source'])
-        self.assertEqual(r['rows'][8]['restart_action'],'restart_reappearance')
+        s += [Sample(-1.2,25.,None)]
+        r=self.exact(s,[event(4,len(s),'Throw-in')],
+                     'H'*5+'D'*5+'H'*7+'D', [('H',0,4),('H',10,16)])
+        self.assertTrue(r['rows'][5]['evidence']['confirmed'])
+        self.assertIn('dead_lifecycle',r['rows'][6]['evidence']['source'])
+        self.assertEqual(r['rows'][10]['restart_action'],'restart_throw_in_entry')
         self.assertTrue(r['rows'][12]['consumed'])
-        self.assertEqual(r['rows'][-1]['evidence']['cues'],('out_of_bounds',))
+        self.assertEqual(r['rows'][-1]['play_state'], 'STOP_ONSET')
 
     def test_L6_supported_restarts_and_unsupported_penalty(self):
-        for kind in ('Free Kick','Corner Kick','Goal Kick','Kick off (start)','Kick off (after goal)'):
+        for kind in ('Corner Kick','Goal Kick','Kick off (start)','Kick off (after goal)'):
             with self.subTest(kind=kind):
                 self.exact(setup()+delivery(),[event(0,7,kind),event(0,3,code='GOALS')],
                            'DDDHHHH',[('H',3,6)])
         # Penalty is not a recognized restart type: tag alone cannot establish D.
         self.exact(setup()+delivery(),[event(0,7,'Penalty')],'H'*7,[('H',0,6)])
+        self.exact(setup()+delivery(),[event(0,7,'Free Kick')],'H'*7,[('H',0,6)])
 
     def test_L7_goalkeeper_and_slow_live(self):
         for speed in (0.,.1,.3,1.):
@@ -60,19 +63,18 @@ class LifecycleCatalogTests(unittest.TestCase):
 
     def test_L9_live_missing_retained_and_expired(self):
         self.exact(live()+gap(4)+live(),[],'H'*12,[('H',0,11)])
-        r=lifecycle(setup()+gap(30)+delivery(),[event(0,37)])
+        samples=[Sample(-1.2,1.0,None)]*2+gap(30)+delivery()
+        r=lifecycle(samples,[event(0,len(samples))])
         d=[x['emission']['dead'] for x in r['rows']]
-        self.assertGreater(d[3],d[27])
-        self.assertAlmostEqual(d[28],1/3)
-        self.assertTrue(all(not x['evidence']['confirmed'] for x in r['rows'][3:33]))
-        self.assertEqual(d[33],0.)
-        self.assertEqual(r['labels'][:28],'D'*28)
-        # Neutral frames can remain D; record the actual path without forcing it.
+        self.assertTrue(all(x['play_state'] == 'DEAD_PERSISTENCE' for x in r['rows'][3:32]))
+        self.assertTrue(all(x['evidence']['confirmed'] for x in r['rows'][3:32]))
+        self.assertEqual(d[34],0.)
+        self.assertEqual(r['labels'][:32],'H'+'D'*31)
 
     def test_L10_quality_halves_ungraded_and_pre_kickoff(self):
         r=lifecycle(live(1,x=80.)+[Sample(-1.1,30.,None),Sample(-1.1,0.,None)])
         self.assertFalse(r['rows'][1]['evidence']['confirmed'])
-        self.assertTrue(r['rows'][2]['evidence']['confirmed'])
+        self.assertFalse(r['rows'][2]['evidence']['confirmed'])
         self.assertAlmostEqual(r['rows'][1]['emission']['dead'],1/3)
         s=setup()+[Sample(None,None,None,0)]+setup(half=2)+delivery(half=2)
         r=self.exact(s,[event(0,len(s),'Kick off (start)')],'DDDXDDDHHHH',[('H',7,10)])
@@ -81,11 +83,11 @@ class LifecycleCatalogTests(unittest.TestCase):
         r=lifecycle([Sample(.1,1.,'H'),Sample(-1.1,1.,None)])
         self.assertTrue(r['rows'][1]['quality']['ball_speed_inconsistent'])
         self.assertFalse(r['rows'][1]['quality']['implausible_ball_jump'])
-        self.assertTrue(r['rows'][1]['evidence']['confirmed'])
+        self.assertFalse(r['rows'][1]['evidence']['confirmed'])
 
     def test_L11_short_structural_stop_vs_outlier(self):
         self.exact(live(4,x=.1)+[Sample(-1.1,30.,None)]+live(4,x=.1),[],
-                   'HHHHDHHHH',[('H',0,3),('H',5,8)])
+                   'H'*9,[('H',0,8)])
         self.exact(live(4,x=80.)+[Sample(-1.1,30.,None)]+live(4,x=80.),[],
                    'H'*9,[('H',0,8)])
 
@@ -107,10 +109,10 @@ class LifecycleCatalogTests(unittest.TestCase):
         self.assertEqual(offset['pairs'][0]['start_offset'],1)
 
     def test_neutral_expiry_does_not_force_decoder_live(self):
-        r=lifecycle(setup()+gap(30),[event(0,33)])
-        self.assertAlmostEqual(r['rows'][28]['emission']['dead'],1/3)
-        self.assertEqual(r['rows'][28]['evidence']['validity'],('ball_missing','expired'))
-        self.assertEqual(r['labels'],'D'*33)
+        samples=[Sample(-1.2,1.0,None)]*2+gap(30)
+        r=lifecycle(samples,[event(0,len(samples))])
+        self.assertEqual(r['rows'][31]['play_state'], 'DEAD_PERSISTENCE')
+        self.assertEqual(r['labels'],'H'+'D'*(len(samples)-1))
 
     def test_spell_matcher_agrees_with_official_synthetic_matching(self):
         from evaluation.possession_metrics import spell_overlaps,match_spells

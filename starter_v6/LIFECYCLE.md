@@ -1,8 +1,10 @@
-# Phase 4 synthetic lifecycle integration
+# Synthetic lifecycle integration
 
 Baseline/rollback: 4f14c6a6bf72bf4498c942dd16d815bb5787d01b.
-No production behavior is changed. Tests use default possession, feature and
-HMM configuration, including 25-frame persistence and micro-D filtering off.
+The original lifecycle catalog remains default-mode coverage. TacticalFusion
+plan Phase 6 additionally exercises the opt-in Stage 1 lifecycle mode under
+`test_phase6_lifecycle_contract.py`; default `stage1_lifecycle_enabled=false`
+preserves V3 behavior. All tests use invented inputs.
 
 ## Harness and execution
 
@@ -59,6 +61,18 @@ No label assertions were rewritten to match output. The initial L5 reappearance
 fixture was corrected from a 1.4 m displacement to .9 m, inside the existing
 1 m runtime gate. It now yields restart_reappearance, appropriate because there
 was no observed stationary setup. Expected label/spell boundaries did not change.
+
+## TacticalFusion Phase 6 opt-in contract
+
+The six typed statuses and restart-type semantics are covered in
+`tests/test_phase6_lifecycle_contract.py`. A stop candidate from one outside
+coordinate stays unconfirmed; persistent D requires reliable action or
+consecutive live recovery to leave. Restart context is deduplicated by type;
+conflicting simultaneous types cannot trigger execution. Free Kick context
+alone stays `RESTART_PREPARATION`, not confirmed D. Five kick restarts require
+stationary setup and credible displacement, while throw-in execution requires
+observed field entry. These are conservative engineering rules, not legal-state
+ground truth, and are not enabled in default E04 configuration.
 
 ## Risks and exclusions
 

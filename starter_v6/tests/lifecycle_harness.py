@@ -6,7 +6,7 @@ Coordinates use metres; source IDs are constructed as video index + 1.
 from dataclasses import dataclass, asdict
 from typing import Optional
 from starter_v6.ingestion import ATDFrame, ATDMetadata, Observation, TrackSlot
-from starter_v6.pipeline import iter_frame_evidence, restart_frame_mask
+from starter_v6.pipeline import iter_frame_evidence, restart_frame_mask, restart_type_frames
 from starter_v6.tag_features import iter_tag_evidence
 from starter_v6.inference import iter_infer_e02
 from starter_v6.hmm import decode, HMMConfig
@@ -63,10 +63,16 @@ def lifecycle(samples, events=()):
             px=None if s.owner is None or s.x is None else s.x+(.1+.3*(slot.index%5) if slot.team==s.owner else 8.+slot.index%5)
             players.append(obs(px,1.))
         raw.append(ATDFrame(i+1,i,tuple(players),obs(s.x,s.speed)))
-    frames=list(iter_frame_evidence(raw,metadata,bytearray(s.half for s in samples),
-                                   restart_frame_mask(events,len(samples))))
+    frames=list(iter_frame_evidence(
+        raw, metadata, bytearray(s.half for s in samples),
+        restart_frame_mask(events,len(samples)), restart_type_frames(events,len(samples)),
+    ))
     tags=iter_tag_evidence(events,len(samples))
-    results=list(iter_infer_e02(frames,tag_evidence=tags))
+    from starter_v6.features import E02Config
+    results=list(iter_infer_e02(
+        frames, feature_config=E02Config(stage1_lifecycle_enabled=True),
+        tag_evidence=tags,
+    ))
     assert [r.emission.frame for r in results]==list(range(len(samples)))
     labels=['X']*len(samples)
     for half in (1,2):
@@ -81,6 +87,7 @@ def lifecycle(samples, events=()):
                          quality=asdict(r.features.quality),tag=asdict(tags[i]),
                          restart_action=frames[i].restart_action,
                          consumed=frames[i].restart_context_consumed,
+                         play_state=r.play_state_hypothesis.status,
                          evidence=asdict(dead),parent=r.inference.label,
                          emission=asdict(r.emission),label=labels[i]))
     # Split halves explicitly, even if adjacent synthetic halves have same team.

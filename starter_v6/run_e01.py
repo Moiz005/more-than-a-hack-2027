@@ -43,6 +43,7 @@ from starter_v6.pipeline import (
     TagAblationAccumulator,
     iter_frame_evidence,
     restart_frame_mask,
+    restart_type_frames,
 )
 from starter_v6.possession import (
     FrameEvidence,
@@ -257,7 +258,13 @@ def run_candidate(config: Dict[str, object], data_dir_override: Optional[str] = 
     raw_frames = iter_atd_frames(
         Path(paths["atd_raw"]), metadata, expected_frames=frame_count, source="tactical", game=GAME
     )
-    evidence = iter_frame_evidence(raw_frames, metadata, half_mask, restart_mask)
+    restart_types = (
+        restart_type_frames(events, frame_count)
+        if config["features"].stage1_lifecycle_enabled else None
+    )
+    evidence = iter_frame_evidence(
+        raw_frames, metadata, half_mask, restart_mask, restart_types,
+    )
     possession_config = config["possession"]
     evidence_mode = str(config["evidence_mode"])
     feature_config = config["features"]
@@ -281,7 +288,9 @@ def run_candidate(config: Dict[str, object], data_dir_override: Optional[str] = 
         comparison_raw = iter_atd_frames(
             Path(paths["atd_raw"]), metadata, expected_frames=frame_count, source="tactical", game=GAME
         )
-        comparison_evidence = iter_frame_evidence(comparison_raw, metadata, half_mask, restart_mask)
+        comparison_evidence = iter_frame_evidence(
+            comparison_raw, metadata, half_mask, restart_mask, restart_types,
+        )
         ablation_inference = iter_infer_e02(comparison_evidence, possession_config, feature_config)
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(output.name + ".tmp")

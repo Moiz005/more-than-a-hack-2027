@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from games import GAME, asset_paths, require
 from starter_v6.ingestion import half_index_by_video_frame, iter_atd_frames, parse_atd_metadata, parse_smart_tagging
 from starter_v6.inference import iter_infer_e02
-from starter_v6.pipeline import iter_frame_evidence, restart_frame_mask
+from starter_v6.pipeline import iter_frame_evidence, restart_frame_mask, restart_type_frames
 from starter_v6.config import load_e04_config
 from starter_v6.tag_features import iter_tag_evidence
 from starter_v6.hmm import decode
@@ -120,7 +120,14 @@ def main(argv=None):
         events = parse_smart_tagging(Path(paths['smart_tagging']), expected_frames=count)
         halves, _ = half_index_by_video_frame(count)
         raw = iter_atd_frames(Path(paths['atd_raw']), metadata, expected_frames=count, source='tactical', game=GAME)
-        evidence = iter_frame_evidence(raw, metadata, halves, restart_frame_mask(events, count))
+        restart_types = (
+            restart_type_frames(events, count)
+            if config["features"].stage1_lifecycle_enabled else None
+        )
+        evidence = iter_frame_evidence(
+            raw, metadata, halves, restart_frame_mask(events, count),
+            restart_types,
+        )
         tags = iter_tag_evidence(events, count) if config['tag_features']['enabled'] else None
         stream = iter_infer_e02(evidence, config['possession'], config['features'], tag_evidence=tags)
         labels = ['X'] * count

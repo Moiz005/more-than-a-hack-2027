@@ -35,6 +35,8 @@ class FrameEvidence:
     # Adapter-owned lifecycle for this uninterrupted context mask run.
     # Default preserves compatibility with callers supplying raw evidence.
     restart_context_consumed: bool = False
+    # Normalized, deduplicated Smart Tag restart types active on this frame.
+    restart_types: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -137,6 +139,31 @@ class FrameInference:
     label: str
     team_evidence: TeamObservation
     dead_ball_evidence: DeadBallObservation
+    play_state_hypothesis: Optional["PlayStateHypothesis"] = None
+
+
+@dataclass(frozen=True)
+class PlayStateHypothesis:
+    """Typed Stage 1 hypothesis; confidence is heuristic, not calibrated."""
+
+    status: str
+    confidence: float
+    evidence_groups: Tuple[str, ...]
+    quality_flags: Tuple[str, ...]
+
+    STATUSES = frozenset({
+        "STOP_ONSET", "DEAD_PERSISTENCE", "RESTART_PREPARATION",
+        "LEGAL_RESTART_EXECUTION", "LIVE_RECOVERED", "UNKNOWN",
+    })
+
+    def __post_init__(self) -> None:
+        if self.status not in self.STATUSES:
+            raise ValueError("unrecognized play-state hypothesis status")
+        if (isinstance(self.confidence, bool) or not isinstance(self.confidence, (int, float))
+                or not math.isfinite(self.confidence) or not 0 <= self.confidence <= 1):
+            raise ValueError("play-state hypothesis confidence must be finite and in [0, 1]")
+        if not isinstance(self.evidence_groups, tuple) or not isinstance(self.quality_flags, tuple):
+            raise ValueError("play-state hypothesis provenance and flags must be tuples")
 
 
 def _validate_frame(frame: FrameEvidence) -> None:
@@ -148,6 +175,12 @@ def _validate_frame(frame: FrameEvidence) -> None:
     if frame.ball_speed_mps is not None:
         if not math.isfinite(frame.ball_speed_mps) or frame.ball_speed_mps < 0:
             raise ValueError("ball speed must be finite and non-negative or absent")
+    if (not isinstance(frame.restart_types, tuple)
+            or any(value not in {
+                "throw-in", "corner kick", "goal kick", "free kick",
+                "kick off (start)", "kick off (after goal)",
+            } for value in frame.restart_types)):
+        raise ValueError("restart_types must be a tuple of recognized normalized restart types")
     for player in frame.players:
         if player.team not in {"H", "A"}:
             raise ValueError("player team must be H or A")
@@ -207,6 +240,7 @@ def observe_dead_ball(
     team_observation: TeamObservation,
     config: PossessionConfig,
     boundary_coordinate_reliable: bool = True,
+    hard_boundary_evidence: bool = True,
 ) -> DeadBallObservation:
     """Compute raw dead-ball cues independently of resolved team ownership.
 
@@ -228,18 +262,19 @@ def observe_dead_ball(
         or by < -margin or by > config.pitch_width_m + margin
     )
     if beyond_margin and boundary_coordinate_reliable:
-        hard = (
+        crossing_candidate = (
             bx <= -crossing or bx >= config.pitch_length_m + crossing
             or by <= -crossing or by >= config.pitch_width_m + crossing
         )
+        hard = crossing_candidate and hard_boundary_evidence
         return DeadBallObservation(
-            ("out_of_bounds",), 1.0 if hard else 0.65, False, hard,
+            ("out_of_bounds",), 1.0 if crossing_candidate else 0.65, False, hard,
             source=("ball_geometry",),
-            validity=("coordinate_valid", "boundary_crossing" if hard else "boundary_candidate"),
+            validity=("coordinate_valid", "boundary_crossing_candidate" if crossing_candidate else "boundary_candidate"),
             event_context="boundary_crossing",
             live_counterevidence=("nearby_team_control",) if team_observation.team else (),
-            confirmable=hard,
-            dead_score=1.0 if hard else 0.65,
+            confirmable=crossing_candidate,
+            dead_score=1.0 if crossing_candidate else 0.65,
             live_score=team_observation.confidence if team_observation.team else 0.0,
             confirmation_family="out_of_bounds",
         )
@@ -364,6 +399,7 @@ class StatefulDeadBallDetector:
         config: PossessionConfig,
         live_reliable: bool = True,
         boundary_coordinate_reliable: bool = True,
+        hard_boundary_evidence: bool = True,
     ) -> RawPlayStateObservation:
         if self._previous_frame is not None and frame.frame != self._previous_frame + 1:
             raise ValueError("frames must be contiguous and ordered")
@@ -374,7 +410,10 @@ class StatefulDeadBallDetector:
             self._stoppage = None
         self._previous_frame, self._previous_half = frame.frame, frame.half
 
-        raw = observe_dead_ball(frame, team, config, boundary_coordinate_reliable)
+        raw = observe_dead_ball(
+            frame, team, config, boundary_coordinate_reliable,
+            hard_boundary_evidence,
+        )
         # Existing physical boundary/dead cues keep precedence. Only reliable
         # observed live evidence retires memory; a missing ball never does.
         if (frame.ball_xy is not None and not raw.cues and live_reliable

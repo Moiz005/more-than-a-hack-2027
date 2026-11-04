@@ -91,7 +91,7 @@ pre-stoppage persistence cannot shorten reacquisition. These named presets are
 E04 JSON runner settings; direct `iter_infer_e02` callers configure feature
 fusion and tag context through their respective arguments.
 
-Phase 6 defines `fuse_evidence()` as the fusion boundary: H/A are ownership
+The original E04 roadmap's Phase 6 defines `fuse_evidence()` as the fusion boundary: H/A are ownership
 conditional-on-live potentials, `live` is neutral live mass when ownership is
 unknown, and `dead` is play-state evidence. The output is finite and normalized
 for the three-state log-space HMM; these values are not calibrated probabilities.
@@ -105,6 +105,31 @@ deterministic validation only. No admissible labeled other-game set was
 available, so this is not an accuracy claim. The frozen E04_C7 tag
 `e04-c7-frozen` remains the explicit fallback; see `PHASE7_DECISION.md` and the
 local-only Phase 7 report for the exact manifests and artifact records.
+
+### TacticalFusion plan Phase 6 — opt-in Stage 1 lifecycle
+
+The TacticalFusion plan's Phase 6 adds an independently switchable
+`features.stage1_lifecycle_enabled` mode; it defaults to `false`, preserving
+the pinned V3/E04 path unless deliberately enabled. In this mode, internal
+`PlayStateHypothesis` values distinguish `STOP_ONSET`, `DEAD_PERSISTENCE`,
+`RESTART_PREPARATION`, `LEGAL_RESTART_EXECUTION`, `LIVE_RECOVERED`, and
+`UNKNOWN`. The public output classes remain H/A/D/X.
+
+Smart Tag restart type intervals are normalized and deduplicated. Corner,
+goal, free, and kickoff restarts require observed stationary setup followed by
+credible movement; throw-ins require observed outside-to-inside field entry.
+Overlapping conflicting restart types do not execute. A Free Kick tag alone
+does not establish a referee award because it cannot distinguish advantage.
+One outside coordinate is only a stop candidate; lifecycle mode requires the
+existing consecutive cue confirmation. Confirmed D persists until a recognized
+restart action or sustained reliable live-control observations. Lifecycle
+confidence is heuristic, not calibrated. Restart-owner evidence remains
+separate and unknown when unsupported.
+
+Limitations: absent boundary onset, unseen throw-in entry, untagged stoppages,
+goal-specific onset, and legal referee decisions remain uncertain. This mode
+has synthetic engineering coverage only; no target-match or public-label
+accuracy comparison was made. See `TFV3_P6_LIFECYCLE_REPORT.md`.
 
 ## Limitations and status
 

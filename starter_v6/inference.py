@@ -15,6 +15,7 @@ from starter_v6.possession import (
     FrameEvidence,
     FrameInference,
     PossessionConfig,
+    PlayStateHypothesis,
     TeamObservation,
     StatefulDeadBallDetector,
     confirm_dead_ball,
@@ -38,6 +39,7 @@ class E02FrameInference:
     evidence: Tuple[Evidence, ...] = ()
     control_hypothesis: Optional["ControlHypothesis"] = None
     control_transition: Optional["ControlTransition"] = None
+    play_state_hypothesis: Optional[PlayStateHypothesis] = None
 
 
 @dataclass(frozen=True)
@@ -239,6 +241,8 @@ def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: De
         home=home, away=away, dead=dead_score, live=dead.live_score,
         hard_dead=dead.hard_evidence, sources=dead.source + team.source,
     )
+
+
     relation = "none"
     if tag is not None and tag.active:
         if tag.team_conflict:
@@ -291,11 +295,61 @@ def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: De
             team.team, team.confidence, evidence_groups,
             tuple(features.quality.flags),
         )
+    if dead.event_context == "restart_action":
+        play_state = "LEGAL_RESTART_EXECUTION"
+        play_confidence = 0.8
+        play_evidence = ("restart_action",)
+    elif dead.confirmed or label == "D":
+        play_state = "DEAD_PERSISTENCE"
+        play_confidence = max(dead.confidence, 0.8 if dead.confirmed else 0.0)
+        play_evidence = dead.source + dead.cues
+    elif dead.event_context == "restart_preparation":
+        play_state = "RESTART_PREPARATION"
+        play_confidence = 0.5
+        play_evidence = dead.source or ("restart_context",)
+    elif dead.cues and dead.event_context != "restart_context":
+        play_state = "STOP_ONSET"
+        play_confidence = dead.confidence
+        play_evidence = dead.source + dead.cues
+    elif features.frame.restart_context:
+        play_state = "RESTART_PREPARATION"
+        play_confidence = 0.5
+        play_evidence = dead.source or ("restart_context",)
+    else:
+        play_state = "UNKNOWN"
+        play_confidence = 0.0
+        play_evidence = dead.source
+    play_hypothesis = PlayStateHypothesis(
+        play_state, min(1.0, max(0.0, play_confidence)),
+        tuple(play_evidence), tuple(features.quality.flags),
+    )
+    inference = FrameInference(
+        features.frame.frame, features.frame.half, label, team, dead,
+        play_state_hypothesis=play_hypothesis,
+    )
     return E02FrameInference(
-        FrameInference(features.frame.frame, features.frame.half, label, team, dead),
+        inference,
         features, emission, relation, atd_signals=atd_signal,
         tag_context=tag, evidence=tuple(evidence),
         control_hypothesis=control_hypothesis,
+        play_state_hypothesis=play_hypothesis,
+    )
+
+
+def _set_play_state(result: E02FrameInference, status: str,
+                    confidence: Optional[float] = None,
+                    evidence_groups: Optional[Tuple[str, ...]] = None) -> E02FrameInference:
+    current = result.play_state_hypothesis
+    hypothesis = PlayStateHypothesis(
+        status,
+        current.confidence if confidence is None else confidence,
+        current.evidence_groups if evidence_groups is None else evidence_groups,
+        current.quality_flags,
+    )
+    return replace(
+        result,
+        play_state_hypothesis=hypothesis,
+        inference=replace(result.inference, play_state_hypothesis=hypothesis),
     )
 
 
@@ -387,6 +441,9 @@ def iter_infer_e02(
     previous_half: Optional[int] = None
     previous_frame: Optional[int] = None
     missing_count = uncertain_count = 0
+    dead_persistence = False
+    recovery_team: Optional[str] = None
+    recovery_count = 0
     candidate_team: Optional[str] = None
     candidate_count = dead_candidate_count = 0
     dead_candidate_family: Optional[str] = None
@@ -417,6 +474,9 @@ def iter_infer_e02(
             pending_recovery.clear()
             state = "X"
             missing_count = uncertain_count = candidate_count = dead_candidate_count = 0
+            dead_persistence = False
+            recovery_team = None
+            recovery_count = 0
             candidate_team = None
             dead_candidate_family = None
             gap_prior_state = gap_support_team = None
@@ -442,7 +502,18 @@ def iter_infer_e02(
                                or features.quality.ball_speed_inconsistent
                                or uncontrolled_flight),
             boundary_coordinate_reliable=not features.quality.implausible_ball_jump,
+            hard_boundary_evidence=not feature_config.stage1_lifecycle_enabled,
         ).dead_ball_evidence
+        if (feature_config.stage1_lifecycle_enabled
+                and "free kick" in frame.restart_types
+                and raw_dead.event_context == "restart_context"):
+            # A tag window cannot distinguish a referee award from advantage.
+            raw_dead = replace(
+                raw_dead, cues=(), confidence=0.0, confirmable=False,
+                source=raw_dead.source + ("free_kick_context_only",),
+                validity=("free_kick_context_only",),
+                event_context="restart_preparation", dead_score=0.0,
+            )
         if frame.half == 0:
             yield from _resolve_gap(
                 pending_gap, None, None, gap_attempted,
@@ -453,6 +524,9 @@ def iter_infer_e02(
             pending_recovery.clear()
             state = "X"
             missing_count = uncertain_count = candidate_count = dead_candidate_count = 0
+            dead_persistence = False
+            recovery_team = None
+            recovery_count = 0
             dead_candidate_family = None
             candidate_team = None
             gap_prior_state = gap_support_team = None
@@ -465,6 +539,12 @@ def iter_infer_e02(
         confirmed_dead, dead_candidate_family, dead_candidate_count = confirm_dead_ball(
             raw_dead, dead_candidate_family, dead_candidate_count, possession_config,
         )
+        if (feature_config.stage1_lifecycle_enabled and not confirmed_dead
+                and raw_dead.confirmation_family == "out_of_bounds"):
+            raw_dead = replace(
+                raw_dead, confidence=0.0, dead_score=0.0,
+                live_score=max(raw_dead.live_score, 1.0),
+            )
         dead = finalize_dead_ball(raw_dead, confirmed_dead)
         dead_ball_detector.remember_confirmation(frame, raw_dead, confirmed_dead, possession_config)
 
@@ -493,11 +573,81 @@ def iter_infer_e02(
             gap_support_count = 0
             gap_support_start = None
             gap_attempted = False
+            newly_dead = not dead_persistence
+            dead_persistence = feature_config.stage1_lifecycle_enabled
+            recovery_team = None
+            recovery_count = 0
             state = "D"
             missing_count = uncertain_count = candidate_count = 0
             candidate_team = None
-            yield _result(features, "D", team, dead, tag, possession_config, atd_signal)
+            result = _result(features, "D", team, dead, tag, possession_config, atd_signal)
+            if newly_dead:
+                result = _set_play_state(result, "STOP_ONSET", dead.confidence,
+                                         dead.source + dead.cues)
+            else:
+                result = _set_play_state(result, "DEAD_PERSISTENCE", dead.confidence,
+                                         dead.source + dead.cues)
+            yield result
             continue
+
+        recovered_status: Optional[str] = None
+        if dead_persistence and feature_config.stage1_lifecycle_enabled:
+            if frame.restart_action is not None:
+                dead_persistence = False
+                state = "X"
+                candidate_team = None
+                candidate_count = 0
+                recovery_team = None
+                recovery_count = 0
+                recovered_status = "LEGAL_RESTART_EXECUTION"
+            else:
+                derived_speed = features.motion.derived_ball_speed_mps
+                provider_speed = features.motion.provider_ball_speed_mps
+                moving = (
+                    (derived_speed is not None and derived_speed >= 0.5)
+                    or (provider_speed is not None and provider_speed >= 0.5
+                        and not features.quality.ball_speed_inconsistent)
+                )
+                supported_live = (
+                    team.ball_observed and team.team in {"H", "A"} and moving
+                    and team.confidence >= possession_config.min_observation_confidence
+                    and not features.quality.low_player_coverage
+                    and not features.quality.implausible_ball_jump
+                    and not features.quality.ball_speed_inconsistent
+                    and not raw_dead.cues
+                )
+                if supported_live:
+                    if recovery_team == team.team:
+                        recovery_count += 1
+                    else:
+                        recovery_team = team.team
+                        recovery_count = 1
+                else:
+                    recovery_team = None
+                    recovery_count = 0
+                if supported_live and recovery_count >= possession_config.acquire_frames:
+                    dead_persistence = False
+                    state = team.team
+                    candidate_team = None
+                    candidate_count = 0
+                    recovery_team = None
+                    recovery_count = 0
+                    recovered_status = "LIVE_RECOVERED"
+                else:
+                    persisted = DeadBallObservation(
+                        ("dead_persistence",), dead.confidence, True, False,
+                        ("dead_lifecycle",) + dead.source,
+                        ("confirmed_stop", "waiting_for_live_recovery"),
+                        "dead_persistence", dead.live_counterevidence, False,
+                        possession_config.confirmed_dead_score, 0.0,
+                        dead.confirmation_family,
+                    )
+                    result = _result(features, "D", team, persisted, tag,
+                                     possession_config, atd_signal)
+                    yield _set_play_state(result, "DEAD_PERSISTENCE",
+                                          possession_config.confirmed_dead_score,
+                                          persisted.source + persisted.cues)
+                    continue
 
         # Observed recovery separates a new missing interval from an unresolved old transition.
         # Flush the prior interval before buffering any later gap, preserving frame order.
@@ -604,6 +754,10 @@ def iter_infer_e02(
                 candidate_count = 0
             label = state if state in {"H", "A"} else "X"
             result = _result(features, label, team, dead, tag, possession_config, atd_signal)
+            if recovered_status is not None:
+                result = _set_play_state(result, recovered_status,
+                                         min(1.0, team.confidence),
+                                         dead.source + ((frame.restart_action,) if frame.restart_action else ("consecutive_live_control",)))
             if transition is not None:
                 result = replace(result, control_transition=transition)
 
