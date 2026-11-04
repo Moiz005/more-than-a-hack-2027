@@ -49,3 +49,20 @@ invented data and requires no match assets.
 The metadata captures the parent commit/config hash, HBK-01 config/source
 hashes, tactical input identifiers, runtime, Python version, selected mode,
 and output hash. These records are local provenance, not accuracy evidence.
+
+## Phase 8 release status
+
+As of 2026-11-05, HBK-01 is **GO only as an isolated engineering experiment**
+and **NO-GO for overlay promotion**. The canonical source is on
+`experiment/e04-v3-visual-possession` at commit
+`03c9245cc45edfc25561d5a7cf9f14b19e622584`. The real tactical `off` output was
+byte-identical to E04 and passed the official structural validator. The audit
+found one eligible opening kickoff candidate per half, but both ATD detectors
+returned `INSUFFICIENT_EVIDENCE`; overlay therefore exited safely without a
+submission. No private metric improvement is verified.
+
+The complete evidence, ablation table, limitations, exact local run IDs, and
+fallback command are in
+[`HBK-01_IMPLEMENTATION_REPORT.md`](HBK-01_IMPLEMENTATION_REPORT.md). Keep
+generated outputs and diagnostics under ignored `.local-checkpoints/` paths;
+do not commit licensed assets or frame-specific reports.
