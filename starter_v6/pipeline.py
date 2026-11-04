@@ -10,6 +10,7 @@ from typing import Dict, Iterable, Iterator
 
 from starter_v6.ingestion import ATDFrame, ATDMetadata, SmartTagEvent
 from starter_v6.possession import FrameEvidence, FrameInference, PlayerEvidence
+from starter_v6.timeline import validate_atd_frame_mapping
 
 
 RESTART_TYPES = frozenset({
@@ -125,8 +126,7 @@ def frame_evidence_from_atd(
     restart_context: bool,
 ) -> FrameEvidence:
     """Convert one aligned ATD row; absent coordinates never become physical (0, 0)."""
-    if raw.frame_id != raw.video_frame + 1:
-        raise ValueError("ATD frame_id must be video_frame + 1")
+    validate_atd_frame_mapping(raw.frame_id, raw.video_frame)
     if len(raw.players) != len(metadata.slots):
         raise ValueError("ATD player slot count does not match metadata")
     if half not in {0, 1, 2}:

@@ -11,7 +11,7 @@ import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
-from games import GAME, asset_paths, require, source_frames
+from games import GAME, asset_paths, require
 from starter_v6.ingestion import half_index_by_video_frame, iter_atd_frames, parse_atd_metadata, parse_smart_tagging
 from starter_v6.inference import iter_infer_e02
 from starter_v6.pipeline import iter_frame_evidence, restart_frame_mask
@@ -30,6 +30,7 @@ from starter_v6.provenance import (
     source_sha256,
 )
 from starter_v6.hmm import HMMConfig
+from starter_v6.timeline import build_tactical_timeline, validate_tactical_reference
 
 
 def synthetic_self_check():
@@ -111,7 +112,9 @@ def main(argv=None):
         data_dir = args.data_dir or config['data_dir']
         paths = asset_paths(game=GAME, data_dir=data_dir, source='tactical')
         require(['atd_meta', 'atd_raw', 'smart_tagging'], game=GAME, data_dir=data_dir, source='tactical')
-        count = source_frames('tactical', GAME)
+        timeline = build_tactical_timeline()
+        validate_tactical_reference(timeline.source, timeline.fps, timeline.frame_count)
+        count = timeline.frame_count
         metadata = parse_atd_metadata(Path(paths['atd_meta']))
         events = parse_smart_tagging(Path(paths['smart_tagging']), expected_frames=count)
         halves, _ = half_index_by_video_frame(count)

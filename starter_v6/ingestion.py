@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple
 
 from games import GAME, GAMES, SOURCES, asset_paths, half_video_blocks, half_of_video_frame, require, source_frames
+from starter_v6.timeline import seconds_to_half_open_frames, validate_atd_frame_mapping, validate_homography_frame_index
 
 
 MISSING_TOKENS = frozenset(("", "n", "nan", "na", "n/a", "none", "null"))
@@ -400,10 +401,12 @@ def parse_smart_tagging(
             raise IngestionError("{}: event time is not numeric".format(path)) from error
         if not math.isfinite(start_s) or not math.isfinite(end_s) or start_s < 0 or end_s < start_s:
             raise IngestionError("{}: event interval has invalid bounds".format(path))
-        start_frame = int(round(start_s * fps))
-        end_frame = int(round(end_s * fps))
-        if expected_frames is not None and (start_frame > expected_frames or end_frame > expected_frames):
-            raise IngestionError("{}: event interval exceeds the video frame range".format(path))
+        try:
+            start_frame, end_frame = seconds_to_half_open_frames(
+                start_s, end_s, fps=fps, frame_count=expected_frames
+            )
+        except ValueError as error:
+            raise IngestionError("{}: {}".format(path, error)) from error
 
         tags: Dict[str, str] = {}
         for label in (element for element in instance.iter() if _local_name(element.tag) == "label"):
@@ -443,10 +446,10 @@ def load_homography_arrays(path: Path, expected_frames: Optional[int] = None) ->
                 frame = int(frame_text) if frame_text is not None else -1
             except ValueError as error:
                 raise IngestionError("{} row {}: invalid frame index".format(path, row_count + 2)) from error
-            if frame != row_count:
-                raise IngestionError(
-                    "{} row {}: expected frame {}, found {}".format(path, row_count + 2, row_count, frame)
-                )
+            try:
+                validate_homography_frame_index(row_count, frame)
+            except ValueError as error:
+                raise IngestionError("{} row {}: {}".format(path, row_count + 2, error)) from error
             if row_count >= expected:
                 raise IngestionError("{}: more than {} homography frames".format(path, expected))
             try:
