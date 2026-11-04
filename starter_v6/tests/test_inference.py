@@ -1,10 +1,13 @@
 """Synthetic E02 temporal-state and gap-transition tests."""
 
 import unittest
+from dataclasses import replace
 
+from starter_v6.atd_signals import RestartMotionProposal
 from starter_v6.features import E02Config
-from starter_v6.inference import iter_infer_e02
+from starter_v6.inference import _team_evidence, iter_infer_e02
 from starter_v6.possession import FrameEvidence, PlayerEvidence, PossessionConfig, possession_spells
+from starter_v6.tag_features import TagEvidence
 
 
 def frame(index, team="H", half=1, ball=True, home_x=None, away_x=None):
@@ -41,6 +44,67 @@ def labels_for(frames, feature_config=None, possession_config=None):
 
 
 class GapInferenceTests(unittest.TestCase):
+    def test_opt_in_atd_control_evidence_reaches_team_inference(self):
+        frames = []
+        for index in range(4):
+            ball_x = 10.0 + index * 0.1
+            players = tuple(
+                [PlayerEvidence("H", ball_x + 1.2 + slot * 3.0,
+                                30.0 if slot == 0 else 24.0 + slot * 4.0, 1.0, slot)
+                 for slot in range(5)]
+                + [PlayerEvidence("A", 30.0 + slot * 3.0,
+                                  30.0 if slot == 0 else 24.0 + slot * 4.0, 1.0, slot + 10)
+                   for slot in range(5)]
+            )
+            frames.append(FrameEvidence(index, 1, (ball_x, 30.0), players))
+
+        strict = PossessionConfig(min_observation_confidence=0.9)
+        disabled = E02Config(top_k=3, low_player_count=6, quality_reference_players=10)
+        enabled = E02Config(
+            top_k=3, low_player_count=6, quality_reference_players=10,
+            atd_signal_fusion_enabled=True,
+        )
+        legacy = list(iter_infer_e02(frames, strict, disabled))
+        fused = list(iter_infer_e02(frames, strict, enabled))
+        defaulted = list(iter_infer_e02(frames, feature_config=E02Config()))
+        explicit_off = list(iter_infer_e02(
+            frames, feature_config=E02Config(atd_signal_fusion_enabled=False),
+        ))
+
+        self.assertIsNone(legacy[-1].inference.team_evidence.team)
+        self.assertTrue(all(item.atd_signals is None for item in legacy))
+        self.assertEqual(
+            [(item.inference.label, item.emission) for item in defaulted],
+            [(item.inference.label, item.emission) for item in explicit_off],
+        )
+        self.assertEqual(fused[-1].inference.team_evidence.team, "H")
+        self.assertTrue(all(
+            item.atd_signals.frame == item.inference.frame for item in fused
+        ))
+        self.assertEqual(fused[-1].atd_signals.control.candidate_team, "H")
+        self.assertIn("ATD_CONTROL_PERSISTENCE", fused[-1].inference.team_evidence.source)
+        restart_signal = replace(
+            fused[-1].atd_signals,
+            restart_motion=RestartMotionProposal(True, 2, True, 0.4, 0.6, "synthetic"),
+        )
+        team = _team_evidence(
+            fused[-1].features, strict, enabled, fused[-1].tag_context, restart_signal,
+        )
+        self.assertIn("ATD_RESTART_MOTION_CONTEXT", team.source)
+
+    def test_tag_context_and_typed_provenance_reach_inference_result(self):
+        tags = [TagEvidence() for _ in range(3)]
+        tags[1] = TagEvidence(
+            active=True, team_prior="H", home_prior=0.4,
+            families=("attacking_phase",), provenance=("synthetic",),
+        )
+        results = list(iter_infer_e02(
+            [frame(i) for i in range(3)], tag_evidence=tags,
+        ))
+        self.assertTrue(results[1].tag_context.active)
+        self.assertEqual(results[1].tag_relation, "uncertain_no_resolution")
+        self.assertEqual([item.source.value for item in results[1].evidence], ["TAG"])
+
     def test_h_missing_gap_h_is_one_h_spell_and_missing_is_not_d(self):
         frames = [frame(i) for i in range(3)]
         frames += [frame(i, ball=False) for i in range(3, 8)]

@@ -8,6 +8,7 @@ import resource
 import sys
 import time
 import subprocess
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -130,6 +131,7 @@ def main(argv=None):
         current_start = None
         current_emissions = []
         seen_halves = set()
+        fusion_counts = Counter()
 
         def flush_half():
             nonlocal current_half, current_start, current_emissions
@@ -156,6 +158,16 @@ def main(argv=None):
             emission_values = (emission.home, emission.away, emission.dead)
             emission_argmax[index] = ('H', 'A', 'D')[max(range(3), key=emission_values.__getitem__)]
             missing_ball[index] = result.features.quality.ball_missing
+            if result.atd_signals is not None:
+                signal = result.atd_signals
+                fusion_counts["frames_with_atd_signals"] += 1
+                fusion_counts["persistent_control_hypotheses"] += signal.control.candidate_team is not None
+                fusion_counts["boundary_hypotheses"] += signal.boundary.candidate
+                fusion_counts["rapid_uncontrolled_motion_hypotheses"] += signal.ball_motion.rapid_uncontrolled_motion
+                fusion_counts["restart_motion_hypotheses"] += signal.restart_motion.candidate
+            fusion_counts["active_tag_context_frames"] += bool(result.tag_context and result.tag_context.active)
+            fusion_counts["atd_control_fused_frames"] += "ATD_CONTROL_PERSISTENCE" in result.inference.team_evidence.source
+            fusion_counts["restart_context_frames"] += "ATD_RESTART_MOTION_CONTEXT" in result.inference.team_evidence.source
             if emission.half == 0:
                 flush_half()
                 continue
@@ -186,6 +198,11 @@ def main(argv=None):
             labels, halves, parent_labels, emission_argmax, missing_ball,
             runtime_seconds=time.perf_counter() - started,
         )
+        report["tactical_fusion"] = {
+            "enabled": config["features"].atd_signal_fusion_enabled,
+            "aggregate_counts": dict(sorted(fusion_counts.items())),
+            "interpretation": "signal and context flow counts; not accuracy or evidence of improvement",
+        }
         atomic_write_text(targets[1], json.dumps(report, indent=2, sort_keys=True) + '\n')
         runtime = time.perf_counter() - started
         source_files = runtime_source_files(project_root)

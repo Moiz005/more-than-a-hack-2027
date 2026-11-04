@@ -1,14 +1,14 @@
-"""Conservative, non-labeling temporal hypotheses derived from tactical ATD.
+"""Conservative temporal support and uncertainty signals derived from tactical ATD.
 
-Outputs here describe support or uncertainty. They never emit possession or DEAD
-labels and are intentionally not consumed by the production decoder.
+Signals are hypotheses, not submission labels. The opt-in E02 bridge may use
+them to adjust team confidence and acquisition timing; DEAD remains separate.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, Iterator, Optional
 
 from starter_v6.features import FrameFeatures
 
@@ -100,14 +100,13 @@ class AtdSignals:
 
 def iter_atd_signals(
     frames: Iterable[FrameFeatures], config: AtdSignalConfig = AtdSignalConfig()
-) -> Tuple[AtdSignals, ...]:
+) -> Iterator[AtdSignals]:
     """Build bounded hypotheses using only observed tactical frames.
 
     Input frame features must be contiguous and ordered. Missing coordinates and
     half boundaries reset temporal support; no position or control is carried
     forward to fill a gap.
     """
-    output = []
     previous: Optional[FrameFeatures] = None
     control_team: Optional[str] = None
     control_run = 0
@@ -230,10 +229,9 @@ def iter_atd_signals(
             0.4 if restart_ok else 0.0, 0.6 if restart_ok else 1.0,
             "setup_then_persistent_motion_proposal" if restart_ok else "insufficient_context_or_temporal_motion",
         )
-        output.append(AtdSignals(
+        yield AtdSignals(
             raw.frame, raw.half, ball_observed,
             "ATD_observed" if ball_observed else "ATD_missing",
             provider_speed, derived_speed, stationary, control, ball_motion, boundary, restart,
-        ))
+        )
         previous = current
-    return tuple(output)

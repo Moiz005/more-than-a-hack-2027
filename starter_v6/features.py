@@ -30,9 +30,14 @@ class E02Config:
     gap_min_quality_weight: float = 0.6
     gap_support_frames: int = 3
     gap_max_frames: int = 25
+    atd_signal_fusion_enabled: bool = False
+    atd_control_confidence_boost: float = 0.2
+    atd_boundary_confidence_scale: float = 0.5
+    atd_rapid_motion_confidence_scale: float = 0.5
+    atd_restart_acquisition_frames: int = 1
 
     def __post_init__(self) -> None:
-        for name in ("top_k", "quality_reference_players", "low_player_count", "gap_min_players_per_team", "gap_support_frames", "gap_max_frames"):
+        for name in ("top_k", "quality_reference_players", "low_player_count", "gap_min_players_per_team", "gap_support_frames", "gap_max_frames", "atd_restart_acquisition_frames"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 1:
                 raise ValueError("{} must be a positive integer".format(name))
@@ -51,6 +56,15 @@ class E02Config:
                 raise ValueError("{} must be finite and in [0, 1]".format(name))
         if self.contest_margin_m < 0:
             raise ValueError("contest_margin_m must be non-negative")
+        if not isinstance(self.atd_signal_fusion_enabled, bool):
+            raise ValueError("atd_signal_fusion_enabled must be boolean")
+        for name in (
+            "atd_control_confidence_boost", "atd_boundary_confidence_scale",
+            "atd_rapid_motion_confidence_scale",
+        ):
+            value = getattr(self, name)
+            if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+                raise ValueError("{} must be finite and in [0, 1]".format(name))
 
 
 @dataclass(frozen=True)

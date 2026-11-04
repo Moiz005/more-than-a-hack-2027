@@ -2,11 +2,10 @@
 
 ## Scope and result
 
-Phase 3 adds a tactical-only, non-labeling signal layer in `atd_signals.py` and
-makes motion provenance explicit in `features.py`. The E04 decoder, Stage 1/2
-inference, H/A/D emissions, and CSV generation do not consume these proposals.
-The feature group can therefore be ablated by omitting `iter_atd_signals()`;
-the existing V3 inference remains the fallback.
+Phase 3 added a tactical-only signal layer in `atd_signals.py` and made motion
+provenance explicit in `features.py`. The original Phase 3 release left these
+signals outside inference. A separately authorized, opt-in inference bridge is
+now documented below; default E04 behavior remains the fallback.
 
 ## Existing V3 inventory
 
@@ -97,3 +96,30 @@ preserved; synthetic counterexamples remain hypotheses/abstentions and never
 create labels; the new feature group has discrete purposes beyond V3 and can be
 disabled without changing the protected inference trace. Accuracy validation
 and production integration remain unclaimed.
+
+## Opt-in inference bridge follow-up
+
+The isolated bridge consumes streamed ATD signals in `iter_infer_e02()` when
+`features.atd_signal_fusion_enabled` is true. Persistent control support may
+corroborate an already geometrically admissible team and raise its observation
+confidence; boundary and rapid uncontrolled-motion hypotheses temper team
+confidence. Restart motion shortens acquisition only when the proposal and
+control support identify the same team. No ATD proposal creates `D`, and
+missing-ball behavior is unchanged. Existing Smart Tag evidence continues to
+enter team inference and is now retained with typed provenance in each result.
+Default configuration keeps ATD fusion off.
+
+The reproducible opt-in example is `config.atd-fusion.example.json`. On the
+authorized tactical input, the full 199,319-frame candidate passed the official
+submission-format validator. Compared with the earlier Phase 3 output, 2,758
+labels changed. This confirms inference integration and a behavioral effect,
+not correctness or improvement. Aggregate counters record 23,533 persistent
+control/fused frames, 65 boundary hypotheses, 33,440 rapid-motion hypotheses,
+2,981 restart-motion hypotheses, 2,403 restart-context/control matches, and
+139,587 active-tag-context frames.
+The competition's public five-minute labels are restricted to alignment,
+format, and label-semantics checks; they cannot be used to compare versions or
+claim gains. A single-candidate pipeline diagnostic on the 7,500 graded public
+frames reported macroF1 0.6836 and spellF1 0.4235 (17 ground-truth possessions);
+these scores were not compared or used for selection. P4 and formal promotion
+gates remain unstarted.

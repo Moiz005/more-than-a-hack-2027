@@ -18,7 +18,7 @@ def players(home_x, away_x, shift=0.0, slot_offset=0):
 
 
 def signals(frames):
-    return iter_atd_signals(iter_frame_features(frames))
+    return list(iter_atd_signals(iter_frame_features(frames)))
 
 
 class AtdSignalTests(unittest.TestCase):
@@ -145,7 +145,9 @@ class AtdSignalTests(unittest.TestCase):
     def test_restart_setup_support_expires_after_bounded_interval(self):
         frames = [FrameEvidence(0, 1, (50.0, 34.0), players(52.0, 60.0), 0.0, True)]
         frames.extend(FrameEvidence(i, 1, (50.0 + i * 0.1, 34.0), players(52.0, 60.0), 2.5, True) for i in range(1, 5))
-        result = iter_atd_signals(iter_frame_features(frames), AtdSignalConfig(restart_setup_max_age_frames=2))
+        result = list(iter_atd_signals(
+            iter_frame_features(frames), AtdSignalConfig(restart_setup_max_age_frames=2)
+        ))
         self.assertTrue(result[2].restart_motion.candidate)
         self.assertFalse(result[3].restart_motion.candidate)
 

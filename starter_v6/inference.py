@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from itertools import tee
 from typing import Iterable, Iterator, List, Optional, Tuple
 
 from starter_v6.features import E02Config, FrameFeatures, iter_frame_features
+from starter_v6.atd_signals import AtdSignalConfig, AtdSignals, iter_atd_signals
+from starter_v6.contracts import Evidence, EvidenceSource, FrameReference
 from starter_v6.possession import (
     DeadBallObservation,
     FrameEvidence,
@@ -29,6 +32,9 @@ class E02FrameInference:
     gap_decision: str = "none"
     gap_decision_reason: str = "none"
     ownership_evidence: Optional["GapOwnershipEvidence"] = None
+    atd_signals: Optional[AtdSignals] = None
+    tag_context: Optional[TagEvidence] = None
+    evidence: Tuple[Evidence, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -45,7 +51,8 @@ class GapOwnershipEvidence:
 
 
 def _team_evidence(features: FrameFeatures, config: PossessionConfig, quality: E02Config,
-                   tag: Optional[TagEvidence] = None) -> TeamObservation:
+                   tag: Optional[TagEvidence] = None,
+                   atd_signal: Optional[AtdSignals] = None) -> TeamObservation:
     """Combine observed-ball proximity, top-k geometry, density, and quality as soft evidence."""
     if not features.quality.ball_observed:
         return TeamObservation(False, None, 0.0, None, None, None)
@@ -103,6 +110,33 @@ def _team_evidence(features: FrameFeatures, config: PossessionConfig, quality: E
     confidence = max(0.0, min(1.0, confidence * features.quality.confidence_weight))
     if features.spatial.contested:
         confidence *= 0.8
+    sources = ["geometry", "motion", "quality"]
+    if quality.atd_signal_fusion_enabled and atd_signal is not None:
+        supported_team = atd_signal.control.candidate_team
+        if supported_team in {"H", "A"}:
+            if best_team is None:
+                nearest = distances[supported_team]
+                opposing = distances["A" if supported_team == "H" else "H"]
+                if (nearest is not None and nearest <= config.control_radius_m
+                        and opposing is not None
+                        and opposing - nearest >= config.min_team_margin_m):
+                    best_team = supported_team
+            if best_team == supported_team:
+                confidence = max(
+                    confidence,
+                    min(1.0, config.min_observation_confidence
+                        + quality.atd_control_confidence_boost * atd_signal.control.confidence),
+                )
+                sources.append("ATD_CONTROL_PERSISTENCE")
+        if (atd_signal.restart_motion.candidate
+                and atd_signal.control.candidate_team == best_team):
+            sources.append("ATD_RESTART_MOTION_CONTEXT")
+        if atd_signal.boundary.candidate:
+            confidence *= quality.atd_boundary_confidence_scale
+            sources.append("ATD_BOUNDARY_UNCERTAINTY")
+        if atd_signal.ball_motion.rapid_uncontrolled_motion:
+            confidence *= quality.atd_rapid_motion_confidence_scale
+            sources.append("ATD_RAPID_UNCONTROLLED_MOTION")
     if confidence < config.min_observation_confidence:
         best_team = None
 
@@ -118,13 +152,14 @@ def _team_evidence(features: FrameFeatures, config: PossessionConfig, quality: E
         margin,
         max(0.0, min(1.0, scores["H"] * features.quality.confidence_weight)),
         max(0.0, min(1.0, scores["A"] * features.quality.confidence_weight)),
-        ("geometry", "motion", "quality"),
+        tuple(sources),
     )
 
 
 def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: DeadBallObservation,
             tag: Optional[TagEvidence] = None,
-            possession_config: PossessionConfig = PossessionConfig()) -> E02FrameInference:
+            possession_config: PossessionConfig = PossessionConfig(),
+            atd_signal: Optional[AtdSignals] = None) -> E02FrameInference:
     dead_score = max(dead.dead_score, dead.confidence if dead.cues else 0.0)
     if dead.hard_evidence:
         dead_score = 1.0
@@ -157,8 +192,51 @@ def _result(features: FrameFeatures, label: str, team: TeamObservation, dead: De
             relation = "uncertain_no_resolution"
         else:
             relation = "contradiction"
-    return E02FrameInference(FrameInference(features.frame.frame, features.frame.half, label, team, dead),
-                             features, emission, relation)
+    evidence = []
+    if atd_signal is not None:
+        control = atd_signal.control
+        control_meaning = (
+            "persistent_control_support:{}".format(control.candidate_team)
+            if control.candidate_team is not None else "no_persistent_control_hypothesis"
+        )
+        evidence.append(Evidence(
+            FrameReference(frame=features.frame.frame), EvidenceSource.ATD,
+            control.confidence, 1 if control.candidate_team is not None else 0,
+            control_meaning, features.quality.confidence_weight,
+            not features.quality.ball_observed, control.uncertainty,
+            "atd_geometry_motion",
+        ))
+    if tag is not None and tag.active:
+        evidence.append(Evidence(
+            FrameReference(frame=features.frame.frame), EvidenceSource.TAG,
+            max(tag.home_prior, tag.away_prior), 1 if tag.team_prior is not None else 0,
+            "smart_tag_context:{}".format(",".join(tag.families)),
+            0.5, False, 0.75, "smart_tag_context",
+        ))
+    return E02FrameInference(
+        FrameInference(features.frame.frame, features.frame.half, label, team, dead),
+        features, emission, relation, atd_signals=atd_signal,
+        tag_context=tag, evidence=tuple(evidence),
+    )
+
+
+def _iter_features_with_signals(
+    frames: Iterable[FrameEvidence], feature_config: E02Config,
+) -> Iterator[Tuple[FrameFeatures, Optional[AtdSignals]]]:
+    feature_stream = iter_frame_features(frames, feature_config)
+    if not feature_config.atd_signal_fusion_enabled:
+        for features in feature_stream:
+            yield features, None
+        return
+    inference_features, signal_features = tee(feature_stream)
+    signal_config = AtdSignalConfig(
+        pitch_length_m=feature_config.pitch_length_m,
+        pitch_width_m=feature_config.pitch_width_m,
+    )
+    for features, signal in zip(
+        inference_features, iter_atd_signals(signal_features, signal_config)
+    ):
+        yield features, signal
 
 
 def _resolve_gap(
@@ -244,7 +322,7 @@ def iter_infer_e02(
     dead_ball_detector = StatefulDeadBallDetector()
 
     tags = iter(tag_evidence) if tag_evidence is not None else None
-    for features in iter_frame_features(frames, feature_config):
+    for features, atd_signal in _iter_features_with_signals(frames, feature_config):
         tag = next(tags) if tags is not None else None
         frame = features.frame
         if previous_frame is not None and frame.frame != previous_frame + 1:
@@ -268,7 +346,7 @@ def iter_infer_e02(
             gap_attempted = False
         previous_half = frame.half
 
-        team = _team_evidence(features, possession_config, feature_config, tag)
+        team = _team_evidence(features, possession_config, feature_config, tag, atd_signal)
         raw_dead = dead_ball_detector.observe(
             frame, team, possession_config,
             live_reliable=not (features.quality.implausible_ball_jump
@@ -291,7 +369,7 @@ def iter_infer_e02(
             gap_support_count = 0
             gap_support_start = None
             gap_attempted = False
-            yield _result(features, "X", team, finalize_dead_ball(raw_dead, False), tag, possession_config)
+            yield _result(features, "X", team, finalize_dead_ball(raw_dead, False), tag, possession_config, atd_signal)
             continue
 
         confirmed_dead, dead_candidate_family, dead_candidate_count = confirm_dead_ball(
@@ -315,7 +393,7 @@ def iter_infer_e02(
             state = "D"
             missing_count = uncertain_count = candidate_count = 0
             candidate_team = None
-            yield _result(features, "D", team, dead, tag, possession_config)
+            yield _result(features, "D", team, dead, tag, possession_config, atd_signal)
             continue
 
         # Observed recovery separates a new missing interval from an unresolved old transition.
@@ -346,7 +424,7 @@ def iter_infer_e02(
             if missing_count > possession_config.max_missing_frames:
                 state = "X"
             label = state if state in {"H", "A"} else "X"
-            pending_gap.append(_result(features, label, team, dead, tag, possession_config))
+            pending_gap.append(_result(features, label, team, dead, tag, possession_config, atd_signal))
 
             opposing_team = "A" if gap_prior_state == "H" else "H" if gap_prior_state == "A" else None
             gap_support_ok = (
@@ -393,7 +471,7 @@ def iter_infer_e02(
             if uncertain_count > possession_config.max_uncertain_frames:
                 state = "X"
             label = state if state in {"H", "A"} else "X"
-            result = _result(features, label, team, dead, tag, possession_config)
+            result = _result(features, label, team, dead, tag, possession_config, atd_signal)
         else:
             uncertain_count = 0
             observed_team = team.team
@@ -405,12 +483,21 @@ def iter_infer_e02(
             else:
                 candidate_team = observed_team
                 candidate_count = 1
-            if observed_team != state and candidate_count >= possession_config.acquire_frames:
+            required_acquire_frames = possession_config.acquire_frames
+            if (
+                feature_config.atd_signal_fusion_enabled and atd_signal is not None
+                and atd_signal.restart_motion.candidate
+                and atd_signal.control.candidate_team == observed_team
+            ):
+                required_acquire_frames = min(
+                    required_acquire_frames, feature_config.atd_restart_acquisition_frames
+                )
+            if observed_team != state and candidate_count >= required_acquire_frames:
                 state = observed_team
                 candidate_team = None
                 candidate_count = 0
             label = state if state in {"H", "A"} else "X"
-            result = _result(features, label, team, dead, tag, possession_config)
+            result = _result(features, label, team, dead, tag, possession_config, atd_signal)
 
         if pending_gap:
             opposing_team = "A" if gap_prior_state == "H" else "H" if gap_prior_state == "A" else None
