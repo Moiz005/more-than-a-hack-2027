@@ -1,0 +1,32 @@
+{
+  "evidence_mode": "e03",
+  "integration_mode": "stage1_then_stage2",
+  "source": "tactical",
+  "data_dir": null,
+  "output": ".local-checkpoints/sequential/example_submission.csv",
+  "diagnostics": ".local-checkpoints/sequential/example_diagnostics.json",
+  "metadata": ".local-checkpoints/sequential/example_run_metadata.json",
+  "possession": {
+    "boundary_crossing_margin_m": 1.0,
+    "boundary_disappearance_pre_frames": 13,
+    "boundary_disappearance_min_missing_frames": 50,
+    "micro_dead_filter": "off",
+    "micro_dead_short_min_frames": 38,
+    "micro_dead_long_min_frames": 50,
+    "confirmed_dead_score": 0.99
+  },
+  "features": {
+    "ownership_flight_speed_mps": 8.0,
+    "flight_owner_carry_confidence": 0.65
+  },
+  "tag_features": {
+    "enabled": true
+  },
+  "hmm": {
+    "initial": [0.45, 0.45, 0.1],
+    "transitions": [[0.98, 0.01, 0.01], [0.01, 0.98, 0.01], [0.025, 0.025, 0.95]],
+    "emission_floor": 1e-12,
+    "emission_weight": 1.0,
+    "temperature": 1.0
+  }
+}

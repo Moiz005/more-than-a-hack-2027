@@ -25,12 +25,14 @@ INTEGRATION_MODES = {
     "atd_only": (True, False, False),
     "tag_context_only": (False, True, True),
     "atd_plus_tag": (True, True, True),
+    "stage1_then_stage2": (True, True, True),
 }
 INTEGRATION_OWNERSHIP_MODES = {
     "exact_v3": "v3_exact",
     "atd_only": "atd_control_plus_context",
     "tag_context_only": "v3_exact",
     "atd_plus_tag": "atd_control_plus_context",
+    "stage1_then_stage2": "atd_control_plus_context",
 }
 
 

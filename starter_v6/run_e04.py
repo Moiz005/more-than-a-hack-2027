@@ -32,6 +32,9 @@ from starter_v6.provenance import (
 )
 from starter_v6.hmm import HMMConfig
 from starter_v6.timeline import build_tactical_timeline, validate_tactical_reference
+from starter_v6.sequential import PlayStateDecision, run_live_ownership, compose_labels
+from starter_v6.kickoff_atd import KickoffATDConfig
+from starter_v6.half_boundary_policy import OVERLAY, apply_kickoff_prefix
 
 
 def synthetic_self_check():
@@ -119,17 +122,22 @@ def main(argv=None):
         metadata = parse_atd_metadata(Path(paths['atd_meta']))
         events = parse_smart_tagging(Path(paths['smart_tagging']), expected_frames=count)
         halves, _ = half_index_by_video_frame(count)
-        raw = iter_atd_frames(Path(paths['atd_raw']), metadata, expected_frames=count, source='tactical', game=GAME)
         restart_types = (
             restart_type_frames(events, count)
             if config["features"].stage1_lifecycle_enabled else None
         )
-        evidence = iter_frame_evidence(
-            raw, metadata, halves, restart_frame_mask(events, count),
-            restart_types,
-        )
-        tags = iter_tag_evidence(events, count) if config['tag_features']['enabled'] else None
-        stream = iter_infer_e02(evidence, config['possession'], config['features'], tag_evidence=tags)
+        def input_streams():
+            raw_frames = iter_atd_frames(
+                Path(paths['atd_raw']), metadata, expected_frames=count,
+                source='tactical', game=GAME,
+            )
+            evidence_frames = iter_frame_evidence(
+                raw_frames, metadata, halves, restart_frame_mask(events, count),
+                restart_types,
+            )
+            tag_frames = iter_tag_evidence(events, count) if config['tag_features']['enabled'] else None
+            return evidence_frames, tag_frames
+
         labels = ['X'] * count
         parent_labels = ['X'] * count
         emission_argmax = ['X'] * count
@@ -158,59 +166,196 @@ def main(argv=None):
             current_emissions = []
 
         processed = 0
-        for index, result in enumerate(stream):
-            emission = result.emission
-            if index >= count or emission.frame != index or emission.half != halves[index]:
-                raise ValueError('misaligned emission stream')
-            processed = index + 1
-            parent_labels[index] = result.inference.label
-            if result.play_state_hypothesis is not None:
-                play_state_counts[result.play_state_hypothesis.status] += 1
-            integration_decisions[result.integration_decision] += 1
-            emission_values = (emission.home, emission.away, emission.dead)
-            emission_argmax[index] = ('H', 'A', 'D')[max(range(3), key=emission_values.__getitem__)]
-            missing_ball[index] = result.features.quality.ball_missing
-            if result.atd_signals is not None:
-                signal = result.atd_signals
-                fusion_counts["frames_with_atd_signals"] += 1
-                fusion_counts["persistent_control_hypotheses"] += signal.control.candidate_team is not None
-                fusion_counts["boundary_hypotheses"] += signal.boundary.candidate
-                fusion_counts["rapid_uncontrolled_motion_hypotheses"] += signal.ball_motion.rapid_uncontrolled_motion
-                fusion_counts["restart_motion_hypotheses"] += signal.restart_motion.candidate
-            fusion_counts["active_tag_context_frames"] += bool(result.tag_context and result.tag_context.active)
-            fusion_counts["atd_control_fused_frames"] += "ATD_CONTROL_PERSISTENCE" in result.inference.team_evidence.source
-            fusion_counts["restart_context_frames"] += "ATD_RESTART_MOTION_CONTEXT" in result.inference.team_evidence.source
-            if result.control_hypothesis is not None:
-                fusion_counts["control_hypothesis_" + result.control_hypothesis.status.lower()] += 1
-                if emission.half in {1, 2} and result.control_hypothesis.status == "UNKNOWN":
-                    fusion_counts["graded_internal_unknown_control_frames"] += 1
-            if result.control_transition is not None:
-                fusion_counts["accepted_control_events"] += 1
-                if result.control_transition.from_team == "UNKNOWN":
-                    fusion_counts["owner_initializations"] += 1
+        sequential_stats = None
+        if config["integration_mode"] == "stage1_then_stage2":
+            from starter_v6.run_half_boundaries import _detect_opening_kickoffs
+            stage1_states = ["UNGRADED" if half == 0 else "LIVE" for half in halves]
+            evidence, tags = input_streams()
+            stage1_stream = iter_infer_e02(
+                evidence, config['possession'], config['features'],
+                tag_evidence=tags, stage1_only=True,
+            )
+            for index, result in enumerate(stage1_stream):
+                if index >= count or result.features.frame.frame != index or result.features.frame.half != halves[index]:
+                    raise ValueError('misaligned Stage 1 stream')
+                processed = index + 1
+                hypothesis = result.play_state_hypothesis
+                state = ("UNGRADED" if halves[index] == 0 else
+                         "DEAD" if result.inference.label == "D" else "LIVE")
+                decision = PlayStateDecision(
+                    index, halves[index], state,
+                    hypothesis.status.lower() if hypothesis else "no_confirmed_dead_transition",
+                    hypothesis.confidence if hypothesis else (0.0 if halves[index] == 0 else 0.5),
+                    hypothesis.evidence_groups if hypothesis else (),
+                    result.features.quality.flags,
+                )
+                stage1_states[index] = decision.state
+                is_dead = decision.state == "DEAD"
+                parent_labels[index] = result.inference.label
+                missing_ball[index] = result.features.quality.ball_missing
+                if is_dead:
+                    play_state_counts["DEAD"] += 1
+                elif halves[index] == 0:
+                    play_state_counts["UNGRADED"] += 1
                 else:
-                    fusion_counts["handover_transitions"] += 1
-                fusion_counts[
-                    "control_transitions_{}_to_{}".format(
-                        result.control_transition.from_team.lower(),
-                        result.control_transition.to_team.lower(),
+                    play_state_counts["LIVE"] += 1
+                if result.play_state_hypothesis is not None:
+                    integration_decisions[result.play_state_hypothesis.status] += 1
+            if processed != count:
+                raise ValueError('incomplete Stage 1 stream')
+
+            # HBK-01 supported estimated/bounded/confirmed kickoff frame remains an
+            # upstream Stage 1 prefix decision. Ambiguous and frame-less evidence fails closed.
+            kickoff_results, _ = _detect_opening_kickoffs(
+                {key: Path(value) for key, value in paths.items()}, timeline,
+                KickoffATDConfig(),
+            )
+            boundary = apply_kickoff_prefix(
+                ["D" if state == "DEAD" else "H" if state == "LIVE" else "X"
+                 for state in stage1_states], timeline, kickoff_results, mode=OVERLAY,
+            )
+            stage1_states = [
+                "UNGRADED" if halves[index] == 0 else
+                "DEAD" if boundary.labels[index] == "D" else "LIVE"
+                for index in range(count)
+            ]
+            live_segment = []
+            live_tag_segment = []
+            stage2_emissions = {}
+            stage2_reacquisition = Counter()
+
+            def flush_live_segment():
+                if not live_segment:
+                    return
+                segment_stream = iter_infer_e02(
+                    iter(live_segment), config['possession'], config['features'],
+                    tag_evidence=iter(live_tag_segment) if config['tag_features']['enabled'] else None,
+                    ownership_only=True,
+                )
+                first_control_frame = None
+                first_segment_frame = live_segment[0].frame
+                for owned in segment_stream:
+                    frame_id = owned.emission.frame
+                    if owned.emission.dead > 0.0:
+                        raise ValueError('Stage 2 emitted DEAD evidence for a LIVE frame')
+                    stage2_emissions[frame_id] = owned.emission
+                    if owned.control_hypothesis is not None:
+                        stage2_reacquisition["control_" + owned.control_hypothesis.status.lower()] += 1
+                        if first_control_frame is None and owned.control_hypothesis.team in {"H", "A"}:
+                            first_control_frame = frame_id
+                    if owned.control_transition is not None and owned.control_transition.from_team == "UNKNOWN":
+                        stage2_reacquisition["owner_initializations"] += 1
+                    elif owned.control_transition is not None:
+                        stage2_reacquisition["handover_transitions"] += 1
+                    if owned.atd_signals is not None:
+                        fusion_counts["stage2_frames_with_atd_signals"] += 1
+                    fusion_counts["stage2_active_tag_context_frames"] += bool(
+                        owned.tag_context and owned.tag_context.active
                     )
-                ] += 1
-            if "OWNERSHIP_CARRY_UNCONTROLLED_FLIGHT" in result.inference.team_evidence.source:
-                fusion_counts["uncontrolled_flight_owner_carry_frames"] += 1
-            if emission.half == 0:
-                flush_half()
-                continue
-            if current_half != emission.half:
-                flush_half()
-                if emission.half in seen_halves:
-                    raise ValueError('graded half appears in multiple disjoint blocks')
-                seen_halves.add(emission.half)
-                current_half = emission.half
-                current_start = index
-            if index != current_start + len(current_emissions):
-                raise ValueError('half must be a contiguous block')
-            current_emissions.append(emission)
+                if first_control_frame is not None:
+                    latency = first_control_frame - first_segment_frame + 1
+                    stage2_reacquisition["reacquisition_segments"] += 1
+                    stage2_reacquisition["reacquisition_latency_frames_sum"] += latency
+                    stage2_reacquisition["reacquisition_latency_frames_max"] = max(
+                        stage2_reacquisition["reacquisition_latency_frames_max"], latency,
+                    )
+                else:
+                    stage2_reacquisition["segments_without_supported_control"] += 1
+                live_segment.clear()
+                live_tag_segment.clear()
+
+            evidence, tags = input_streams()
+            tag_iter = iter(tags) if tags is not None else None
+            for index, frame in enumerate(evidence):
+                tag = next(tag_iter) if tag_iter is not None else None
+                if index >= count or frame.frame != index or frame.half != halves[index]:
+                    raise ValueError('misaligned Stage 2 input stream')
+                if stage1_states[index] == "LIVE":
+                    live_segment.append(frame)
+                    if tag_iter is not None:
+                        live_tag_segment.append(tag)
+                else:
+                    flush_live_segment()
+            flush_live_segment()
+            expected_live = sum(state == "LIVE" for state in stage1_states)
+            if len(stage2_emissions) != expected_live:
+                raise ValueError('Stage 2 frame count does not equal Stage 1 LIVE count')
+            ownership, sequential_stats = run_live_ownership(
+                ((stage2_emissions[index].half, stage2_emissions[index], True)
+                 for index in sorted(stage2_emissions)), config["hmm"],
+            )
+            labels = compose_labels(stage1_states, ownership)
+            seen_halves = {half for half in halves if half in {1, 2}}
+            sequential_stats.update({
+                "stage1_live_frames": expected_live,
+                "stage1_dead_frames": sum(state == "DEAD" for state in stage1_states),
+                "stage1_ungraded_frames": sum(state == "UNGRADED" for state in stage1_states),
+                "stage2_frames": len(stage2_emissions),
+                "hbk01_prefix_status": boundary.status,
+                "hbk01_prefix_changed_frames": len(boundary.changed_frames),
+                "stage1_transitions": dict(sorted(integration_decisions.items())),
+                "stage2_ownership_diagnostics": dict(sorted(stage2_reacquisition.items())),
+            })
+            for index, emission in stage2_emissions.items():
+                emission_values = (emission.home, emission.away)
+                emission_argmax[index] = ("H", "A")[max(range(2), key=emission_values.__getitem__)]
+            processed = count
+        else:
+            evidence, tags = input_streams()
+            stream = iter_infer_e02(evidence, config['possession'], config['features'], tag_evidence=tags)
+            for index, result in enumerate(stream):
+                emission = result.emission
+                if index >= count or emission.frame != index or emission.half != halves[index]:
+                    raise ValueError('misaligned emission stream')
+                processed = index + 1
+                parent_labels[index] = result.inference.label
+                if result.play_state_hypothesis is not None:
+                    play_state_counts[result.play_state_hypothesis.status] += 1
+                integration_decisions[result.integration_decision] += 1
+                emission_values = (emission.home, emission.away, emission.dead)
+                emission_argmax[index] = ('H', 'A', 'D')[max(range(3), key=emission_values.__getitem__)]
+                missing_ball[index] = result.features.quality.ball_missing
+                if result.atd_signals is not None:
+                    signal = result.atd_signals
+                    fusion_counts["frames_with_atd_signals"] += 1
+                    fusion_counts["persistent_control_hypotheses"] += signal.control.candidate_team is not None
+                    fusion_counts["boundary_hypotheses"] += signal.boundary.candidate
+                    fusion_counts["rapid_uncontrolled_motion_hypotheses"] += signal.ball_motion.rapid_uncontrolled_motion
+                    fusion_counts["restart_motion_hypotheses"] += signal.restart_motion.candidate
+                fusion_counts["active_tag_context_frames"] += bool(result.tag_context and result.tag_context.active)
+                fusion_counts["atd_control_fused_frames"] += "ATD_CONTROL_PERSISTENCE" in result.inference.team_evidence.source
+                fusion_counts["restart_context_frames"] += "ATD_RESTART_MOTION_CONTEXT" in result.inference.team_evidence.source
+                if result.control_hypothesis is not None:
+                    fusion_counts["control_hypothesis_" + result.control_hypothesis.status.lower()] += 1
+                    if emission.half in {1, 2} and result.control_hypothesis.status == "UNKNOWN":
+                        fusion_counts["graded_internal_unknown_control_frames"] += 1
+                if result.control_transition is not None:
+                    fusion_counts["accepted_control_events"] += 1
+                    if result.control_transition.from_team == "UNKNOWN":
+                        fusion_counts["owner_initializations"] += 1
+                    else:
+                        fusion_counts["handover_transitions"] += 1
+                    fusion_counts[
+                        "control_transitions_{}_to_{}".format(
+                            result.control_transition.from_team.lower(),
+                            result.control_transition.to_team.lower(),
+                        )
+                    ] += 1
+                if "OWNERSHIP_CARRY_UNCONTROLLED_FLIGHT" in result.inference.team_evidence.source:
+                    fusion_counts["uncontrolled_flight_owner_carry_frames"] += 1
+                if emission.half == 0:
+                    flush_half()
+                    continue
+                if current_half != emission.half:
+                    flush_half()
+                    if emission.half in seen_halves:
+                        raise ValueError('graded half appears in multiple disjoint blocks')
+                    seen_halves.add(emission.half)
+                    current_half = emission.half
+                    current_start = index
+                if index != current_start + len(current_emissions):
+                    raise ValueError('half must be a contiguous block')
+                current_emissions.append(emission)
         flush_half()
         if processed != count:
             raise ValueError('incomplete emission stream')
@@ -237,6 +382,7 @@ def main(argv=None):
             "aggregate_counts": dict(sorted(fusion_counts.items())),
             "play_state_hypotheses": dict(sorted(play_state_counts.items())),
             "stage1_stage2_decisions": dict(sorted(integration_decisions.items())),
+            "sequential_pipeline": sequential_stats,
             "interpretation": "aggregate internal hypotheses, transition, and context flow; not accuracy or evidence of improvement",
             "unknown_control_is_internal": True,
             "submission_abstentions_are_separately_reported": True,

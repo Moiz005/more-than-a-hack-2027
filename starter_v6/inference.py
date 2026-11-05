@@ -451,8 +451,13 @@ def iter_infer_e02(
     possession_config: PossessionConfig = PossessionConfig(),
     feature_config: E02Config = E02Config(),
     tag_evidence: Optional[Iterable[TagEvidence]] = None,
+    *,
+    stage1_only: bool = False,
+    ownership_only: bool = False,
 ) -> Iterator[E02FrameInference]:
-    """Infer a sequence without filling missing coordinates; only confirmed gaps can be revised."""
+    """Infer a sequence, or run its isolated Stage 1 / LIVE-only Stage 2 pass."""
+    if stage1_only and ownership_only:
+        raise ValueError("stage1_only and ownership_only are mutually exclusive")
     state = "X"
     previous_half: Optional[int] = None
     previous_frame: Optional[int] = None
@@ -478,7 +483,7 @@ def iter_infer_e02(
     for features, atd_signal in _iter_features_with_signals(frames, feature_config):
         tag = next(tags) if tags is not None else None
         frame = features.frame
-        if (feature_config.stage1_lifecycle_enabled
+        if (not ownership_only and feature_config.stage1_lifecycle_enabled
                 and feature_config.stage1_stage2_fusion_enabled
                 and not dead_persistence
                 and "free kick" in frame.restart_types
@@ -512,7 +517,14 @@ def iter_infer_e02(
             gap_attempted = False
         previous_half = frame.half
 
-        team = _team_evidence(features, possession_config, feature_config, tag, atd_signal)
+        if stage1_only:
+            # Do not run an H/A classifier in Stage 1, even if its result would
+            # later be discarded. Downstream lifecycle logic sees only neutral support.
+            team = TeamObservation(features.quality.ball_observed, None, 0.0,
+                                   None, None, None, 0.0, 0.0,
+                                   ("team_neutral_stage1",))
+        else:
+            team = _team_evidence(features, possession_config, feature_config, tag, atd_signal)
         uncontrolled_flight = bool(
             feature_config.atd_signal_fusion_enabled and atd_signal is not None
             and state in {"H", "A"} and team.team in {"H", "A"}
@@ -523,15 +535,17 @@ def iter_infer_e02(
             and not features.quality.implausible_ball_jump
             and not features.quality.ball_speed_inconsistent
         )
-        raw_dead = dead_ball_detector.observe(
+        raw_dead = (DeadBallObservation((), 0.0, source=("stage2_live_only",),
+                                        validity=("dead_state_excluded",), live_score=0.15)
+                    if ownership_only else dead_ball_detector.observe(
             frame, team, possession_config,
             live_reliable=not (features.quality.implausible_ball_jump
                                or features.quality.ball_speed_inconsistent
                                or uncontrolled_flight),
             boundary_coordinate_reliable=not features.quality.implausible_ball_jump,
             hard_boundary_evidence=not feature_config.stage1_lifecycle_enabled,
-        ).dead_ball_evidence
-        if (feature_config.stage1_lifecycle_enabled
+        ).dead_ball_evidence)
+        if (not ownership_only and feature_config.stage1_lifecycle_enabled
                 and "free kick" in frame.restart_types
                 and raw_dead.event_context == "restart_context"):
             # A tag window cannot distinguish a referee award from advantage.
@@ -564,16 +578,18 @@ def iter_infer_e02(
             yield _result(features, "X", team, finalize_dead_ball(raw_dead, False), tag, possession_config, atd_signal)
             continue
 
-        confirmed_dead, dead_candidate_family, dead_candidate_count = confirm_dead_ball(
-            raw_dead, dead_candidate_family, dead_candidate_count, possession_config,
+        confirmed_dead, dead_candidate_family, dead_candidate_count = (
+            (False, None, 0) if ownership_only else confirm_dead_ball(
+                raw_dead, dead_candidate_family, dead_candidate_count, possession_config,
+            )
         )
-        if (feature_config.stage1_lifecycle_enabled and not confirmed_dead
+        if (not ownership_only and feature_config.stage1_lifecycle_enabled and not confirmed_dead
                 and raw_dead.confirmation_family == "out_of_bounds"):
             raw_dead = replace(
                 raw_dead, confidence=0.0, dead_score=0.0,
                 live_score=max(raw_dead.live_score, 1.0),
             )
-        if (feature_config.stage1_lifecycle_enabled and dead_persistence
+        if (not ownership_only and feature_config.stage1_lifecycle_enabled and dead_persistence
                 and frame.restart_action is not None):
             # Once a confirmed stop exists, the recognized restart action ends
             # that DEAD interval even if the same frame retains stale boundary
@@ -614,7 +630,7 @@ def iter_infer_e02(
             gap_support_start = None
             gap_attempted = False
             newly_dead = not dead_persistence
-            dead_persistence = feature_config.stage1_lifecycle_enabled
+            dead_persistence = feature_config.stage1_lifecycle_enabled and not ownership_only
             ownership_acquisition_pending = (
                 feature_config.stage1_stage2_fusion_enabled
             )
@@ -638,7 +654,7 @@ def iter_infer_e02(
             continue
 
         recovered_status: Optional[str] = None
-        if dead_persistence and feature_config.stage1_lifecycle_enabled:
+        if dead_persistence and feature_config.stage1_lifecycle_enabled and not ownership_only:
             if frame.restart_action is not None:
                 dead_persistence = False
                 ownership_acquisition_pending = (
@@ -659,18 +675,25 @@ def iter_infer_e02(
                         and not features.quality.ball_speed_inconsistent)
                 )
                 supported_live = (
-                    team.ball_observed and team.team in {"H", "A"} and moving
-                    and team.confidence >= possession_config.min_observation_confidence
+                    team.ball_observed and moving
+                    and any(
+                        value is not None and value <= possession_config.control_radius_m
+                        for value in (features.spatial.nearest_home_m,
+                                      features.spatial.nearest_away_m)
+                    )
                     and not features.quality.low_player_coverage
                     and not features.quality.implausible_ball_jump
                     and not features.quality.ball_speed_inconsistent
                     and not raw_dead.cues
+                    and (stage1_only or (team.team in {"H", "A"}
+                         and team.confidence >= possession_config.min_observation_confidence))
                 )
                 if supported_live:
-                    if recovery_team == team.team:
+                    recovery_key = "NEUTRAL" if stage1_only else team.team
+                    if recovery_team == recovery_key:
                         recovery_count += 1
                     else:
-                        recovery_team = team.team
+                        recovery_team = recovery_key
                         recovery_count = 1
                 else:
                     recovery_team = None
@@ -678,7 +701,7 @@ def iter_infer_e02(
                 if supported_live and recovery_count >= possession_config.acquire_frames:
                     dead_persistence = False
                     ownership_acquisition_pending = False
-                    state = team.team
+                    state = "X" if stage1_only else team.team
                     candidate_team = None
                     candidate_count = 0
                     recovery_team = None
@@ -702,7 +725,7 @@ def iter_infer_e02(
                                           persisted.source + persisted.cues)
                     continue
 
-        if (feature_config.stage1_stage2_fusion_enabled
+        if (not ownership_only and feature_config.stage1_stage2_fusion_enabled
                 and frame.restart_action is not None
                 and recovered_status is None):
             # A legal restart puts play live, but its action frame cannot name
@@ -712,6 +735,16 @@ def iter_infer_e02(
             candidate_team = None
             candidate_count = 0
             recovered_status = "LEGAL_RESTART_EXECUTION"
+        if ownership_only and frame.restart_action is not None:
+            # Stage 2 begins UNKNOWN at every LIVE segment; restart motion
+            # cannot identify the restarting side or count toward acquisition.
+            team = TeamObservation(
+                team.ball_observed, None, 0.0,
+                team.nearest_home_m, team.nearest_away_m, team.margin_m,
+                0.0, 0.0, team.source + ("restart_action_owner_neutral",),
+            )
+            candidate_team = None
+            candidate_count = 0
 
         # Observed recovery separates a new missing interval from an unresolved old transition.
         # Flush the prior interval before buffering any later gap, preserving frame order.

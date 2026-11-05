@@ -138,12 +138,13 @@ experiments. V3's existing Smart Tag evidence remains enabled in each named
 mode; `tag_context_only` means the new typed Stage 1 lifecycle is added without
 the new ATD ownership bridge.
 
-| `integration_mode` | New ATD ownership fusion | Typed Stage 1 lifecycle and owner mask |
+| `integration_mode` | New ATD ownership fusion | Typed Stage 1 lifecycle / ownership processing |
 |---|---:|---:|
 | `exact_v3` | off | off |
 | `atd_only` | on | off |
 | `tag_context_only` | off | on |
 | `atd_plus_tag` | on | on |
+| `stage1_then_stage2` | on | sequential stages |
 
 `features.atd_signal_fusion_enabled`, `features.stage1_lifecycle_enabled`,
 `features.stage1_stage2_fusion_enabled`, and `tag_features.enabled` remain
@@ -151,6 +152,27 @@ independently configurable when using custom config (the Stage 1→Stage 2 mask
 requires Stage 1 lifecycle). Phase 4 rejected runtime homography features, so
 there is no ATD+tag+homography preset. `integration_mode` and the legacy
 `ownership_mode` are mutually exclusive.
+
+`stage1_then_stage2` runs a separate team-neutral Stage 1 pass first. Confirmed
+stops and the upstream HBK-01 second-half kickoff prefix become fixed `D`; the
+official half mask remains `X`. Stage 2 then runs on each contiguous LIVE
+segment only, with dead-ball inference disabled. Its H/A-only Viterbi decode
+restarts at every DEAD, ungraded interval, frame gap, and half boundary. Stage
+1's LIVE/DEAD sequence is retained during composition. LIVE recovery uses
+observed ball movement and tracking quality without selecting a team. Accepted
+HBK-01 confirmed, estimated, or frame-resolvable bounded evidence passes
+through the existing fail-closed boundary policy before Stage 2; ambiguous or
+frame-less evidence leaves the boundary unchanged. See
+`config.sequential.example.json` for the configuration. `exact_v3` and the
+other integration modes retain the three-state per-half decoder.
+
+Run the opt-in mode from the repository root with the local environment:
+
+```bash
+.venv/bin/python -m starter_v6.run_e04 \
+  --config starter_v6/config.sequential.example.json \
+  --checkpoint-root .local-checkpoints/sequential
+```
 
 When the Stage 1→Stage 2 mask is enabled, confirmed DEAD removes H/A ownership
 potentials. A detected restart marks play live but gives equal H/A mass until

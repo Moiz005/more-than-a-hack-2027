@@ -44,6 +44,7 @@ class Phase7IntegrationTests(unittest.TestCase):
             "atd_only": (True, False, False),
             "tag_context_only": (False, True, True),
             "atd_plus_tag": (True, True, True),
+            "stage1_then_stage2": (True, True, True),
         }
         for mode, flags in expected.items():
             with self.subTest(mode=mode):
